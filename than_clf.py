@@ -9,13 +9,14 @@
 import os
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
+from .tlstm import TLSTMCell
 from datetime import datetime
 import numpy as np
 
 class T_HAN(object):
     """
     A Time-Aware-HAN for claim classification
-    Uses an embedding layer, followed by a token-level bi-GRU with attention, a sentence-level time-aware-lstm with attention and sofrmax layer
+    Uses an embedding layer, followed by a token-level inception CNN with attention, a sentence-level time-aware-lstm with attention and sofrmax layer
 
     Parameters
     ----------
@@ -99,43 +100,26 @@ class T_HAN(object):
             self.W_projection = tf.get_variable("W_projection", shape=[self.hidden_size, self.num_classes], initializer=self.initializer)  # [embed_size,label_size]
             self.b_projection = tf.get_variable("b_projection", shape=[self.num_classes])
 
-        with tf.name_scope("tlstm_weight"):
-            self.Wi = tf.nn.dropout(self._init_weights(self.hidden_size*2, self.hidden_size, name='Input_Hidden_weight', reg=None), self.dropout_keep_prob)
-            self.Ui = tf.nn.dropout(self._init_weights(self.hidden_size, self.hidden_size, name='Input_State_weight', reg=None), self.dropout_keep_prob)
-            self.bi = self._init_bias(self.hidden_size, name='Input_Hidden_bias')
-
-            self.Wf = tf.nn.dropout(self._init_weights(self.hidden_size*2, self.hidden_size, name='Forget_Hidden_weight', reg=None), self.dropout_keep_prob)
-            self.Uf = tf.nn.dropout(self._init_weights(self.hidden_size, self.hidden_size, name='Forget_State_weight', reg=None), self.dropout_keep_prob)
-            self.bf = self._init_bias(self.hidden_size, name='Forget_Hidden_bias')
-
-            self.Wog = tf.nn.dropout(self._init_weights(self.hidden_size*2, self.hidden_size, name='Output_Hidden_weight', reg=None), self.dropout_keep_prob)
-            self.Uog = tf.nn.dropout(self._init_weights(self.hidden_size, self.hidden_size, name='Output_State_weight', reg=None), self.dropout_keep_prob)
-            self.bog = self._init_bias(self.hidden_size, name='Output_Hidden_bias')
-
-            self.Wc = tf.nn.dropout(self._init_weights(self.hidden_size*2, self.hidden_size, name='Cell_Hidden_weight', reg=None), self.dropout_keep_prob)
-            self.Uc = tf.nn.dropout(self._init_weights(self.hidden_size, self.hidden_size, name='Cell_State_weight', reg=None), self.dropout_keep_prob)
-            self.bc = self._init_bias(self.hidden_size, name='Cell_Hidden_bias')
-
-            self.W_decomp = tf.nn.dropout(self._init_weights(self.hidden_size, self.hidden_size, name='Decomposition_Hidden_weight', reg=None), self.dropout_keep_prob)
-            self.b_decomp = self._init_bias(self.hidden_size, name='Decomposition_Hidden_bias_enc')
-        
         # 1. get emebedding of tokens
-        self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [instance_size, num_bucket, sentence_length, embedding_size]
+        self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [batch_size, num_bucket, sentence_length, embedding_size]
         self.batch_size = tf.shape(self.input)[0]
         
         # 2. token level attention
         self.input = tf.reshape(self.input, shape=[-1, self.max_sentence_length, self.emb_size])
+        sentence_representation = self._attention_token_level(self.input) # shape:[batch_size*num_sentences,emb_size]
+        sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.emb_size]) # shape:[batch_size,num_sentences,emb_size]
 
-        hidden_state_forward = self._gru_forward_token_level(self.input)
-        hidden_state_backward = self._gru_backward_token_level(self.input)
-        self.hidden_state = tf.concat([hidden_state_forward, hidden_state_backward], axis=2)
+        # make scan_time [batch_size x seq_length x 1]
+        scan_time = tf.reshape(self.input_t, [tf.shape(self.input_t)[0], tf.shape(self.input_t)[1], 1])
+        concat_input = tf.concat([tf.cast(scan_time, tf.float32), sentence_representation], 2) # [batch_size x seq_length x num_filters_total+1]
 
-        sentence_representation = self._attention_token_level(self.hidden_state)  # output:[batch_size*num_sentences,hidden_size*2]
-        sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.hidden_size * 2]) # shape:[batch_size,num_sentences,hidden_size*2]
-        
-        # 3. time-aware lstm of sentence sequence
-        self.hidden_state_sentence = self._time_aware_lstm_sentence_level(sentence_representation) # [batch_size, num_sentences, hidden_size]
-        self.instance_representation = self._attention_sentence_level(tf.transpose(self.hidden_state_sentence, [1, 0, 2]))
+        self.tlstm_cell = TLSTMCell(self.hidden_size, dropout_keep_prob_in=self.dropout_keep_prob,
+                                    dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
+                                    dropout_keep_prob_gate=self.dropout_keep_prob, dropout_keep_prob_forget=self.dropout_keep_prob)
+        init_state = self.tlstm_cell.zero_state(batch_size=self.batch_size, dtype=tf.float32)  # [batch_size, hidden_size]
+        self.hidden_state_sentence, _ = tf.nn.dynamic_rnn(self.tlstm_cell, concat_input, initial_state=init_state, time_major=False)
+
+        self.instance_representation = self._attention_sentence_level(self.hidden_state_sentence)
         with tf.name_scope("output"):
             self.logits = tf.matmul(self.instance_representation, self.W_projection) + self.b_projection  # [batch_size, self.num_classes]. main computation graph is here.
             self.probs = tf.nn.softmax(self.logits, name="probs")
@@ -150,125 +134,33 @@ class T_HAN(object):
         with tf.name_scope("performance"):
             _, self.auc = tf.metrics.auc(self.input_y, self.probs, num_thresholds=3000, curve="ROC", name="auc")
         
-        self.loss_sum = tf.summary.scalar("loss_mae_train", self.loss_val)
-        self.learning_rate_sum = tf.summary.scalar("learning_rate", self.learning_rate)
+        self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
         self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
         self.merged_sum = tf.summary.merge_all()
 
-    def _init_weights(self, input_size, output_dim, name, std=0.1, reg=None):
-        return tf.get_variable(name,shape=[input_size, output_dim],initializer=self.initializer, regularizer = reg)
-
-    def _init_bias(self, output_dim, name):
-        return tf.get_variable(name,shape=[output_dim],initializer=tf.constant_initializer(0.0))
-
-    def _map_elapse_time(self, t):
-        c1 = tf.constant(1, dtype=tf.float32)
-        c2 = tf.constant(2.7183, dtype=tf.float32)
-        T = tf.div(c1, tf.log(t + c2), name='Log_elapse_time') # according to paper, used for large time delta like days
-        Ones = tf.ones([1, self.hidden_size], dtype=tf.float32)
-        T = tf.matmul(T, Ones)
-        return T
-
-    def _TLSTM_Unit(self, prev_hidden_memory, concat_input):
-        prev_hidden_state, prev_cell = tf.unstack(prev_hidden_memory)
-
-        batch_size = tf.shape(concat_input)[0]
-        x = tf.slice(concat_input, [0,1], [batch_size, self.hidden_size*2])
-        t = tf.slice(concat_input, [0,0], [batch_size,1])
-
-        # Dealing with time irregularity
-        # Map elapse time in days or months
-        T = self._map_elapse_time(t)
-
-        # Decompose the previous cell if there is a elapse time
-        C_ST = tf.nn.tanh(tf.matmul(prev_cell, self.W_decomp) + self.b_decomp)
-        C_ST_dis = tf.multiply(T, C_ST)
-        # if T is 0, then the weight is one
-        prev_cell = prev_cell - C_ST + C_ST_dis
-
-        i = tf.sigmoid(tf.matmul(x, self.Wi) + tf.matmul(prev_hidden_state, self.Ui) + self.bi) # Input gate
-        f = tf.sigmoid(tf.matmul(x, self.Wf) + tf.matmul(prev_hidden_state, self.Uf) + self.bf) # Forget Gate
-        o = tf.sigmoid(tf.matmul(x, self.Wog) + tf.matmul(prev_hidden_state, self.Uog) + self.bog) # Output Gate
-
-        C = tf.nn.tanh(tf.matmul(x, self.Wc) + tf.matmul(prev_hidden_state, self.Uc) + self.bc) # Candidate Memory Cell
-        Ct = f * prev_cell + i * C # Current Memory cell
-        current_hidden_state = o * tf.nn.tanh(Ct) # Current Hidden state
-
-        return tf.stack([current_hidden_state, Ct])
-
-    def _gru_forward_token_level(self, embedded_tokens):
-        """
-        @param embedded_tokens: [batch_size*num_sentences, sentence_length, embed_size]
-        @return [batch_size*num_sentences, sentence_length, hidden_size]
-        """
-        with tf.variable_scope("gru_weights_token_level_forward"):
-            self.wf_cell = tf.nn.rnn_cell.GRUCell(self.hidden_size)
-            self.wf_cell = tf.nn.rnn_cell.DropoutWrapper(self.wf_cell,
-                                                         input_keep_prob=self.dropout_keep_prob,
-                                                         output_keep_prob=self.dropout_keep_prob)
-            init_state = self.wf_cell.zero_state(batch_size=self.batch_size*self.max_sequence_length, dtype=tf.float32)  # [batch_size, hidden_size]
-            output, state = tf.nn.dynamic_rnn(self.wf_cell, embedded_tokens, initial_state=init_state, time_major=False)
-        
-        return output
-
-    def _gru_backward_token_level(self, embedded_tokens):
-        """
-        @param embedded_tokens: [batch_size*num_sentences, sentence_length, embed_size]
-        @return [batch_size*num_sentences, sentence_length, hidden_size]
-        """
-        embedded_tokens_reverse = tf.reverse(embedded_tokens, [2])
-        with tf.variable_scope("gru_weights_token_level_backward"):
-            self.wb_cell = tf.nn.rnn_cell.GRUCell(self.hidden_size)
-            self.wb_cell = tf.nn.rnn_cell.DropoutWrapper(self.wb_cell,
-                                                         input_keep_prob=self.dropout_keep_prob,
-                                                         output_keep_prob=self.dropout_keep_prob)
-            init_state = self.wb_cell.zero_state(batch_size=self.batch_size*self.max_sequence_length, dtype=tf.float32)  # [batch_size, hidden_size]
-            output, state = tf.nn.dynamic_rnn(self.wb_cell, embedded_tokens_reverse, initial_state=init_state, time_major=False)
-        
-        output = tf.reverse(output, [2])
-        return output
-
-    def _time_aware_lstm_sentence_level(self, sentence_input):
-        """
-        @param sentence_input: [batch_size, num_sentences, hidden_size*2]
-        @return sentence_states [batch_size, num_sentences, hidden_size]
-        """
-        batch_size = tf.shape(sentence_input)[0]
-        scan_input_ = tf.transpose(sentence_input, perm=[2, 0, 1])
-        scan_input = tf.transpose(scan_input_) # scan input is [seq_length x batch_size x hidden_size*2]
-        scan_time = tf.transpose(self.input_t) # scan_time [seq_length x batch_size]
-        initial_hidden = tf.zeros([batch_size, self.hidden_size], tf.float32)
-        ini_state_cell = tf.stack([initial_hidden, initial_hidden])
-
-        # make scan_time [seq_length x batch_size x 1]
-        scan_time = tf.reshape(scan_time, [tf.shape(scan_time)[0], tf.shape(scan_time)[1], 1])
-        concat_input = tf.concat([tf.cast(scan_time, tf.float32), scan_input],2) # [seq_length x batch_size x hidden_size*2+1]
-        packed_hidden_states = tf.scan(self._TLSTM_Unit, concat_input, initializer=ini_state_cell)
-        return packed_hidden_states[:, 0, :, :]
-
     def _attention_token_level(self, hidden_state):
         """
-        @param hidden_state: [batch_size*num_sentences,sentence_length,hidden_size*2]
-        @return representation [batch_size*num_sentences,hidden_size*2]
+        @param hidden_state: [batch_size*num_sentences,sentence_length,embedding_size]
+        @return representation [batch_size*num_sentences,embedding_size]
         """
         with tf.name_scope("token_level_attention"):
             self.W_w_attention_token = tf.get_variable("W_w_attention_token",
-                                                      shape=[self.hidden_size * 2, self.hidden_size * 2],
+                                                      shape=[self.emb_size, self.emb_size],
                                                       initializer=self.initializer)
-            self.W_b_attention_token = tf.get_variable("W_b_attention_token", shape=[self.hidden_size * 2])
-            self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.hidden_size * 2],
+            self.W_b_attention_token = tf.get_variable("W_b_attention_token", shape=[self.emb_size])
+            self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.emb_size],
                                                         initializer=tf.random_normal_initializer(stddev=0.1))
         
-        hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.hidden_size * 2])
+        hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.emb_size])
         hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
-        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sentence_length, self.hidden_size * 2])
+        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sentence_length, self.emb_size])
         hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_token)
         attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
         attention_logits_max = tf.reduce_max(attention_logits, axis=1, keep_dims=True)  # [batch_size*num_sentences,1]
         p_attention = tf.nn.softmax(attention_logits - attention_logits_max)  # [batch_size*num_sentences,sentence_length]
         p_attention_expanded = tf.expand_dims(p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
-        sentence_representation = tf.multiply(p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, hidden_size*2]
-        sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, hidden_size*2]
+        sentence_representation = tf.multiply(p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, emb_size]
+        sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, emb_size]
         return sentence_representation
 
     def _attention_sentence_level(self, hidden_state_sentence):
@@ -411,8 +303,9 @@ def train_han(model, t_train, x_train, y_train, dev_sample_percentage, num_epoch
         # create model root path if not exists
         if not os.path.exists(model_path): os.mkdir(model_path)
 
-        writer = tf.summary.FileWriter(os.path.join(model_path))
-        writer.add_graph(sess.graph)
+        writer_train = tf.summary.FileWriter(os.path.join(model_path, 'train'))
+        writer_val = tf.summary.FileWriter(os.path.join(model_path, 'vali'))
+        writer_train.add_graph(sess.graph)
         
         # get current epoch
         curr_epoch = sess.run(model.epoch_step)
@@ -431,13 +324,13 @@ def train_han(model, t_train, x_train, y_train, dev_sample_percentage, num_epoch
 
                 # train one step
                 curr_loss, _, merged_sum = sess.run([model.loss_val, model.train_op, model.merged_sum], feed_dict)
-                writer.add_summary(merged_sum, global_step=sess.run(model.global_step))
+                writer_train.add_summary(merged_sum, global_step=sess.run(model.global_step))
                 counter = counter+1
 
                 # evaluation
                 if counter % evaluate_every == 0:
-                    #train_accu = model.auc.eval(feed_dict, session=sess)
-                    dev_loss, dev_accu = _do_eval(sess, model, x_dev, t_dev, y_dev, batch_size)
+                    #train_accu, _ = model.auc.eval(feed_dict, session=sess)
+                    dev_loss, dev_accu = _do_eval(sess, model, x_dev, t_dev, y_dev, batch_size, writer_val)
                     print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
             sess.run(model.epoch_increment)
 
@@ -569,7 +462,7 @@ def test_han(model_path, step=None, prob_norm='softmax', just_graph=False, **kwa
 
 ############################# PRIVATE FUNCTIONS ###############################
 
-def _do_eval(sess, model, eval_x, eval_t, eval_y, batch_size):
+def _do_eval(sess, model, eval_x, eval_t, eval_y, batch_size, writer_val):
     """
     Evaluate development in batch (if direcly force sess run entire development set, may raise OOM error)
     """
@@ -580,7 +473,8 @@ def _do_eval(sess, model, eval_x, eval_t, eval_y, batch_size):
         feed_dict = {model.input_x: eval_x[start:end],
                      model.input_t: eval_t[start:end],
                      model.input_y: eval_y[start:end]}
-        curr_eval_loss, curr_probs = sess.run([model.loss_val, model.probs], feed_dict)
+        curr_eval_loss, curr_probs, merged_sum = sess.run([model.loss_val, model.probs, model.merged_sum], feed_dict)
+        writer_val.add_summary(merged_sum, global_step=sess.run(model.global_step))
         
         eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
     feed_dict = {model.input_x: eval_x[end:],
@@ -588,5 +482,5 @@ def _do_eval(sess, model, eval_x, eval_t, eval_y, batch_size):
                  model.input_y: eval_y[end:]}
     curr_probs = sess.run(model.probs, feed_dict)
     eval_probs = np.concatenate([eval_probs, curr_probs])
-    eval_acc = sess.run(model.auc, {model.input_y: eval_y, model.probs: eval_probs})
+    eval_acc   = sess.run(model.auc, {model.input_y: eval_y, model.probs: eval_probs})
     return eval_loss/float(eval_counter), eval_acc

@@ -9,6 +9,7 @@
 import os
 import pickle
 import tensorflow as tf
+from tensorflow.python import debug as tf_debug
 from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
@@ -53,26 +54,22 @@ class T_LSTM(object):
     objective: str, default 'ce'
         the objective function (loss) model trains on; if 'ce', use cross-entropy, if 'auc', use AUROC as objective
 
-    initializer: tf tensor initializer object, default tf.random_normal_initializer(stddev=0.1)
+    initializer: tf tensor initializer object, default tf.orthogonal_initializer()
         initializer for fully connected layer weights
-
-    sec_order: list of strings, default ['MED','ALG','IMU','LAB','ECT','PRL','PCD','HTR','VIT','TXT']
-        list of section codes under fixed order which consistenly assigned to tensors thought whole pipeline
 
     Examples
     --------
-    >>> from enid.tlstm import T_LSTM
+    >>> from enid.tlstm_clf import T_LSTM
     >>> rnn = T_LSTM(max_sequence_length=200, hidden_size=128,
-            num_classes=2, embedding_dict=embedding_dict,
-            w_embedding_dict=w_embedding_dict, learning_rate=0.05,
-            decay_steps=5000, decay_rate=0.9,
+            num_classes=2, pretrain_embedding=pretrain_embedding,
+            learning_rate=0.05, decay_steps=5000, decay_rate=0.9,
             dropout_keep_prob=0.8, l2_reg_lambda=0.0,
             objective='ce')
     """
 
     def __init__(
-        self, max_sequence_length, hidden_size, num_classes, pretrain_embedding,#variable_size, embedding_size
-        learning_rate, decay_steps, decay_rate, dropout_keep_prob, l2_reg_lambda=0.0, objective='ce', pos_weight=1.0,
+        self, max_sequence_length, hidden_size, num_classes, pretrain_embedding, learning_rate,
+        decay_steps, decay_rate, dropout_keep_prob, l2_reg_lambda=0.0, objective='ce',
         initializer=tf.orthogonal_initializer()):
 
         """init all hyperparameter here"""
@@ -80,15 +77,12 @@ class T_LSTM(object):
 
         # set hyperparamter
         self.num_classes = num_classes
-#        self.variable_size = variable_size
-#        self.embedding_size = embedding_size
         self.pretrain_embedding = pretrain_embedding
         self.max_sequence_length = max_sequence_length
         self.hidden_size = hidden_size
         self.dropout_keep_prob = dropout_keep_prob
         self.l2_reg_lambda = l2_reg_lambda
         self.learning_rate = learning_rate
-        self.pos_weight = pos_weight
         self.initializer = initializer
 
         self.global_step = tf.Variable(0, trainable=False, name="Global_Step")
@@ -96,14 +90,13 @@ class T_LSTM(object):
         self.epoch_increment = tf.assign(self.epoch_step, tf.add(self.epoch_step, tf.constant(1)))
         self.decay_steps, self.decay_rate = decay_steps, decay_rate
 
-        # add placeholder (X, quantity, time and label)
+        # add placeholder (X, time and label)
         self.input_x = tf.placeholder(tf.int32, [None, self.max_sequence_length], name="input_x") # X [instance_size, num_bucket]
         self.input_t = tf.placeholder(tf.int32, [None, self.max_sequence_length], name="input_t") # T [instance_size, num_bucket]
         self.input_y = tf.placeholder(tf.int8,  [None, self.num_classes],         name="input_y") # y [instance_size, num_classes]
 
         """define all weights here"""
         with tf.name_scope("embedding"): # embedding matrix
-            #embedding_matrix = tf.truncated_normal((self.variable_size, self.embedding_size), stddev=1/np.sqrt(self.embedding_size))
             embedding_matrix = tf.concat([self.pretrain_embedding, tf.zeros((1, self.pretrain_embedding.shape[1]))], axis=0)
             self.Embedding = tf.Variable(embedding_matrix, trainable=True, dtype=tf.float32, name='embedding')
 
@@ -133,9 +126,6 @@ class T_LSTM(object):
             self.W_decomp = tf.nn.dropout(self._init_weights(self.hidden_size, self.hidden_size, name='Decomposition_Hidden_weight', reg=None), self.dropout_keep_prob)
             self.b_decomp = self._init_bias(self.hidden_size, name='Decomposition_Hidden_bias_enc')
 
-            # self.Wo = self._init_weights(self.hidden_size, self.hidden_size*2, name='Fc_Layer_weight',reg=tf.contrib.layers.l2_regularizer(scale=self.l2_reg_lambda))#tf.contrib.layers.l2_regularizer(scale=0.001)
-            # self.bo = self._init_bias(self.hidden_size*2, name='Fc_Layer_bias')
-
             self.W_softmax = self._init_weights(self.hidden_size, self.num_classes, name='Output_Layer_weight', reg=tf.contrib.layers.l2_regularizer(scale=self.l2_reg_lambda))#tf.contrib.layers.l2_regularizer(scale=0.001)
             self.b_softmax = self._init_bias(self.num_classes, name='Output_Layer_bias')
 
@@ -159,7 +149,6 @@ class T_LSTM(object):
             # all_outputs = tf.map_fn(self._get_output, attention_output)
 
         with tf.name_scope("output"):
-            # self.logits = tf.identity(tf.reverse(all_outputs, [0])[0, :, :], name='scores')
             self.logits = tf.nn.xw_plus_b(attention_output, self.W_softmax, self.b_softmax, name='scores')
             self.probs = tf.nn.softmax(self.logits, name="probs")
 
@@ -307,8 +296,8 @@ class T_LSTM(object):
         """
         based on the loss, use Adam to update parameter
         """
-        learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps,self.decay_rate, staircase=True)
-        train_op = tf.contrib.layers.optimize_loss(self.loss_val, global_step=self.global_step, learning_rate=learning_rate, optimizer="Adam")
+        #learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps,self.decay_rate, staircase=True)
+        train_op = tf.contrib.layers.optimize_loss(self.loss_val, global_step=self.global_step, learning_rate=self.learning_rate, optimizer="Adam")
         return train_op
 
     def _loss(self, l2_reg_lambda):
@@ -348,14 +337,14 @@ class T_LSTM(object):
         loss = tf.identity(loss + l2_losses, name='loss')
         return loss
 
-def train_rnn(model, t_train, x_train, y_train, dev_sample_percentage, num_epochs, batch_size, evaluate_every, model_path):
+def train_rnn(model, t_train, x_train, y_train, dev_sample_percentage, num_epochs, batch_size, evaluate_every, model_path, debug=False):
     """
     Training module for T_LSTM objectives
     
     Parameters
     ----------
     model: object of T_LSTM
-        initialized Phased LSTM model
+        initialized Time-Aware LSTM model
 
     t_train: 2-D numpy array, shape (num_exemplars, num_bucket)
         variable indices all buckets and sections
@@ -383,11 +372,11 @@ def train_rnn(model, t_train, x_train, y_train, dev_sample_percentage, num_epoch
 
     Examples
     --------
-    >>> from enid.tlstm import train_rnn
+    >>> from enid.tlstm_clf import train_rnn
     >>> train_rnn(model=rnn, t_train=T, x_train=X,
                 y_train=y, dev_sample_percentage=0.01,
                 num_epochs=20, batch_size=64,
-                evaluate_every=100, model_path='./plstm_model/')
+                evaluate_every=100, model_path='./tlstm_model/')
     """
 
     # get number of input exemplars
@@ -406,51 +395,52 @@ def train_rnn(model, t_train, x_train, y_train, dev_sample_percentage, num_epoch
         # configurate TensorFlow session, enable GPU accelerated if possible
         config=tf.ConfigProto(log_device_placement=True)
         config.gpu_options.allow_growth=True
-        with tf.Session(config=config) as sess:
-            saver = tf.train.Saver()
+        sess =  tf.Session(config=config)
+        saver = tf.train.Saver()
 
-            # initialize all variables
-            sess.run(tf.global_variables_initializer())
-            sess.run(tf.local_variables_initializer())
+        # initialize all variables
+        sess.run(tf.global_variables_initializer())
+        sess.run(tf.local_variables_initializer())
 
-            print('start time:', datetime.now())
-            # create model root path if not exists
-            if not os.path.exists(model_path): os.mkdir(model_path)
+        if debug: sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        print('start time:', datetime.now())
+        # create model root path if not exists
+        if not os.path.exists(model_path): os.mkdir(model_path)
 
-            writer = tf.summary.FileWriter(os.path.join(model_path))
-            writer.add_graph(sess.graph)
-            
-            # get current epoch
-            curr_epoch = sess.run(model.epoch_step)
-            for epoch in range(curr_epoch, num_epochs):
-                print('Epoch', epoch+1, '...')
-                counter = 0
+        writer = tf.summary.FileWriter(os.path.join(model_path))
+        writer.add_graph(sess.graph)
+        
+        # get current epoch
+        curr_epoch = sess.run(model.epoch_step)
+        for epoch in range(curr_epoch, num_epochs):
+            print('Epoch', epoch+1, '...')
+            counter = 0
 
-                # loop batch training
-                for start, end in zip(range(0, training_size, batch_size), range(batch_size, training_size, batch_size)):
-                    epoch_x = x_train[start:end]
-                    epoch_t = t_train[start:end]
-                    epoch_y = y_train[start:end]
+            # loop batch training
+            for start, end in zip(range(0, training_size, batch_size), range(batch_size, training_size, batch_size)):
+                epoch_x = x_train[start:end]
+                epoch_t = t_train[start:end]
+                epoch_y = y_train[start:end]
 
-                    # create model inputs
-                    feed_dict = {model.input_x: epoch_x, model.input_t: epoch_t, model.input_y: epoch_y}
+                # create model inputs
+                feed_dict = {model.input_x: epoch_x, model.input_t: epoch_t, model.input_y: epoch_y}
 
-                    # train one step
-                    curr_loss, _, merged_sum = sess.run([model.loss_val, model.train_op, model.merged_sum], feed_dict)
-                    writer.add_summary(merged_sum, global_step=sess.run(model.global_step))
-                    counter = counter+1
+                # train one step
+                curr_loss, _, merged_sum = sess.run([model.loss_val, model.train_op, model.merged_sum], feed_dict)
+                writer.add_summary(merged_sum, global_step=sess.run(model.global_step))
+                counter = counter+1
 
-                    # evaluation
-                    if counter % evaluate_every == 0:
-                        #train_accu = model.auc.eval(feed_dict)
-                        dev_loss, dev_accu = _do_eval(sess, model, x_dev, t_dev, y_dev, batch_size)
-                        print('Step: {: <5}  |  Loss: {:2.10f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
-                sess.run(model.epoch_increment)
+                # evaluation
+                if counter % evaluate_every == 0:
+                    dev_loss, dev_accu = _do_eval(sess, model, x_dev, t_dev, y_dev, batch_size)
+                    print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
+            sess.run(model.epoch_increment)
 
-                # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
-                saver.save(sess, os.path.join(model_path, 'model'), global_step=model.global_step)
-                print('='*100)
-            print('End time:', datetime.now())
+            # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
+            saver.save(sess, os.path.join(model_path, 'model'), global_step=model.global_step)
+            print('='*100)
+        sess.close()
+        print('End time:', datetime.now())
 
 def test_rnn(model_path, step=None, prob_norm='softmax', just_graph=False, **kwargs):
     """
@@ -506,8 +496,8 @@ def test_rnn(model_path, step=None, prob_norm='softmax', just_graph=False, **kwa
 
     Examples
     --------
-    >>> from enid.tlstm import test_rnn
-    >>> sess, t, x, y_pred = test_rnn('./plstm_model', prob_norm='sigmoid', just_graph=True)
+    >>> from enid.tlstm_clf import test_rnn
+    >>> sess, t, x, y_pred = test_rnn('./tlstm_model', prob_norm='sigmoid', just_graph=True)
     >>> sess.run(y_pred, {x: x_test, t: t_test})
     array([[4.8457133e-03, 9.9515426e-01],
            [4.6948572e-03, 9.9530518e-01],
@@ -518,8 +508,8 @@ def test_rnn(model_path, step=None, prob_norm='softmax', just_graph=False, **kwa
            [5.9802778e-04, 9.9940193e-01]], dtype=float32)
     >>> sess.close()
 
-    >>> from enid.tlstm import test_rnn
-    >>> test_rnn('./plstm_model', t_test=T_test, x_test=X_test)
+    >>> from enid.tlstm_clf import test_rnn
+    >>> test_rnn('./tlstm_model', t_test=T_test, x_test=X_test)
     array([9.9515426e-01,
            4.6948572e-03,
            3.1738445e-02,,
@@ -555,21 +545,23 @@ def test_rnn(model_path, step=None, prob_norm='softmax', just_graph=False, **kwa
     if just_graph: return sess, t, x, y_pred
     else:
         number_examples = kwargs['t_test'].shape[0]
-        y_probs = np.empty((0))
-        for start, end in zip(range(0,number_examples,128), range(128,number_examples,128)):
-            feed_dict = {x: kwargs['x_test'][start:end],
-                         t: kwargs['t_test'][start:end]}
+        if number_examples < 128:
+            y_probs = sess.run(y_pred, {x: kwargs['x_test'], t: kwargs['t_test']})[:,0]
+        else:
+            y_probs = np.empty((0))
+            for start, end in zip(range(0,number_examples,128), range(128,number_examples,128)):
+                feed_dict = {x: kwargs['x_test'][start:end],
+                             t: kwargs['t_test'][start:end]}
+                probs = sess.run(y_pred, feed_dict)[:,0]
+                y_probs = np.concatenate([y_probs, probs])
+            feed_dict = {x: kwargs['x_test'][end:],
+                         t: kwargs['t_test'][end:]}
             probs = sess.run(y_pred, feed_dict)[:,0]
             y_probs = np.concatenate([y_probs, probs])
-        feed_dict = {x: kwargs['x_test'][end:],
-                     t: kwargs['t_test'][end:]}
-        probs = sess.run(y_pred, feed_dict)[:,0]
-        y_probs = np.concatenate([y_probs, probs])
-        cali = pickle.load(open(os.path.join(os.path.dirname(__file__), 'pickle_files','er_calibration'), 'rb'))
         sess.close()
-        return cali.transform(y_probs)
+        return y_probs
 
-def interpret(model_path, step, t_, x_, label):
+def interpret(model_path, step, t_, x_, label, mode='cd', length=50):
     if len(t_.shape) == 1: t_, x_ = np.expand_dims(t_, 0), np.expand_dims(x_, 0)
     
     tf.reset_default_graph()
@@ -589,14 +581,16 @@ def interpret(model_path, step, t_, x_, label):
     x      = graph.get_tensor_by_name("input_x:0")
     t      = graph.get_tensor_by_name("input_t:0")
     
-    code_desc = pickle.load(open(os.path.join(os.path.dirname(__file__),'pickle_files','codes'), 'rb'))
-    output = sess.run(states, {x: x_, t: t_})[:, -50:].T
-    vec    = Vectorizer()
-    tokens = [_get_variables(c, vec) for c in x_[0][-50:]]
+    if mode == 'cd':    code_desc = pickle.load(open(os.path.join(os.path.dirname(__file__),'pickle_files','codes'), 'rb'))
+    if mode == 'more2': code_desc = pickle.load(open(os.path.join(os.path.dirname(__file__),'pickle_files','codes_more2'), 'rb'))
+    code_desc = {c:str(d) if len(str(d))<= 50 else str(d)[:50]+'...' for c, d in code_desc.items()}
+    output = sess.run(states, {x: x_, t: t_})[:, -length:].T
+    vec    = Vectorizer(mode)
+    tokens = [_get_variables(c, vec) for c in x_[0][-length:]]
     tokens = [t+'  '+code_desc[t] if t in code_desc else t for t in tokens]
     
-    fig, ax = plt.subplots(figsize=(2,12), dpi=120)
-    sns.heatmap(output, xticklabels=[label], cmap='coolwarm', yticklabels=tokens, vmin=-1, vmax=2, ax=ax)
+    fig, ax = plt.subplots(figsize=(2,int(length*0.24)), dpi=120)
+    sns.heatmap(output, xticklabels=[label], cmap='GnBu', yticklabels=tokens, vmin=-3, vmax=2, ax=ax)
     sess.close()
 
 ############################# PRIVATE FUNCTIONS ###############################
@@ -606,13 +600,19 @@ def _do_eval(sess, model, eval_x, eval_t, eval_y, batch_size):
     Evaluate development in batch (if direcly force sess run entire development set, may raise OOM error)
     """
     number_examples = len(eval_x)
-    eval_loss, eval_acc, eval_counter = 0.0, 0.0, 0
+    eval_loss, eval_counter = 0.0, 0
+    eval_probs = np.empty((0, model.num_classes))
     for start, end in zip(range(0,number_examples,batch_size), range(batch_size,number_examples,batch_size)):
         feed_dict = {model.input_x: eval_x[start:end],
                      model.input_t: eval_t[start:end],
                      model.input_y: eval_y[start:end]}
-        curr_eval_loss = sess.run(model.loss_val, feed_dict)
-        curr_eval_acc  = model.auc.eval(feed_dict)
+        curr_eval_loss, curr_probs = sess.run([model.loss_val, model.probs], feed_dict)
         
-        eval_loss, eval_acc, eval_counter = eval_loss+curr_eval_loss, eval_acc+curr_eval_acc, eval_counter+1
-    return eval_loss/float(eval_counter), eval_acc/float(eval_counter)
+        eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
+    feed_dict = {model.input_x: eval_x[end:],
+                 model.input_t: eval_t[end:],
+                 model.input_y: eval_y[end:]}
+    curr_probs = sess.run(model.probs, feed_dict)
+    eval_probs = np.concatenate([eval_probs, curr_probs])
+    eval_acc = sess.run(model.auc, {model.input_y: eval_y, model.probs: eval_probs})
+    return eval_loss/float(eval_counter), eval_acc

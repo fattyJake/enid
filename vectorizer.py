@@ -22,7 +22,7 @@ class Vectorizer(object):
         self.all_variables = list(pickle.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)),r'pickle_files','all_variables'),"rb")))
         self.variable_size = len(self.all_variables)
 
-    def fit_transform(self, seq, max_sequence_length, encounter_limit=None):
+    def __call__(self, seq, max_sequence_length, encounter_limit=None):
         """
         Transform claim sequence from enid.data_helper into event containers
 
@@ -49,9 +49,6 @@ class Vectorizer(object):
         --------
         >>> from enid.vectorizer import Vectorizer
         >>> vec = Vectorizer()
-        >>> vec.fit_transform(ehr, 200)[0]
-        array([84954, 85460, 85560, 85582, 85584, 85740, 85741, 85834, 85835,
-               85880, 85884, 85926, 85950, 85951, 85962, 85968, 86132])
         
         >>> vec.fit_transform(ehr, 200)[1]
         array([[[  138,  1146,  1457, ..., 26494, 26494, 26494],
