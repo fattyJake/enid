@@ -8,20 +8,24 @@
 
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
+from tensorflow.python.framework.ops import control_dependencies
 from tensorflow.python.ops import rnn_cell_impl
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import nn_impl
+from tensorflow.python.ops import control_flow_ops
 
 _EPSILON = 10**-4
 
 class TLSTMCell(rnn_cell_impl.RNNCell):
     """
-    Time-Aware LSTM with several additional regularization; edit `BasicLSTMCell` of tensorflow.
+    Time-Aware LSTM with several additional regularization and batch normalization;
+    edit `BasicLSTMCell` of tensorflow.
     
     The implementation is based on: http://arxiv.org/abs/1409.2329 and
     https://www.kdd.org/kdd2017/papers/view/patient-subtyping-via-time-aware-lstm-networks
@@ -37,6 +41,10 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
     num_units : int
         The number of units in the LSTM cell.
 
+    time_aware : boolean
+        If False, perform as basic LSTM cell; if True, perform time decomposition. Note that if True,
+        corresponding cell input should be [batch_size x 1+input_size], where the first column is time-delta
+
     forget_bias : float, optional
         The bias added to forget gates (see above). Must set to `0.0` manually when restoring
         from CudnnLSTM-trained checkpoints.
@@ -48,7 +56,7 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
         Describing whether to reuse variables in an existing scope. If not `True`, and the
         existing scope already has the given variables, an error is raised.
 
-    layer_norm : boolean, optional
+    batch_norm : boolean, optional
         If True, apply layer normalization.
 
     norm_shift : float, optional
@@ -76,16 +84,17 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
     --------
     >>> import tensorflow as tf
     >>> from enid.tlstm import TLSTMCell
-    >>> tlstm_cell = TLSTMCell(128)
+    >>> tlstm_cell = TLSTMCell(128, True)
     >>> init_state = tlstm_cell.zero_state(batch_size=64, dtype=tf.float32)
     >>> output, _ = tf.nn.dynamic_rnn(tlstm_cell, input, initial_state=init_state)
     """
     def __init__(self,
                  num_units,
+                 time_aware,
                  forget_bias=1.0,
                  activation=None,
                  reuse=None,
-                 layer_norm: bool=False,
+                 batch_norm: bool=True,
                  norm_shift: float=0.0,
                  norm_gain: float=1.0,  # layer normalization
                  dropout_keep_prob_in: float = 1.0,
@@ -98,10 +107,11 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
 
         super(TLSTMCell, self).__init__(_reuse=reuse)
         self._num_units = num_units
+        self._time_aware = time_aware
         self._forget_bias = forget_bias
         self._activation = activation or math_ops.tanh
 
-        self._layer_norm = layer_norm
+        self._batch_norm = batch_norm
         self._g = norm_gain
         self._b = norm_shift
         
@@ -126,6 +136,31 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
         Ones = array_ops.ones([1, self._num_units], dtype=dtypes.float32)
         T = math_ops.matmul(T, Ones)
         return T
+
+    def _batch_normalization(self, x, name_scope, trainable, decay=0.999):
+        '''Assume 2d [batch, values] tensor'''
+
+        with vs.variable_scope(name_scope):
+            size = x.get_shape().as_list()[1]
+
+            scale = vs.get_variable('scale', [size], initializer=init_ops.constant_initializer(0.1))
+            offset = vs.get_variable('offset', [size])
+
+            pop_mean = vs.get_variable('pop_mean', [size], initializer=init_ops.constant_initializer(0.0), trainable=False)
+            pop_var = vs.get_variable('pop_var', [size], initializer=init_ops.constant_initializer(1.0), trainable=False)
+            batch_mean, batch_var = nn_impl.moments(x, [0])
+
+            train_mean_op = state_ops.assign(pop_mean, pop_mean * decay + batch_mean * (1 - decay))
+            train_var_op = state_ops.assign(pop_var, pop_var * decay + batch_var * (1 - decay))
+
+            def batch_statistics():
+                with control_dependencies([train_mean_op, train_var_op]):
+                    return nn_impl.batch_normalization(x, batch_mean, batch_var, offset, scale, _EPSILON)
+
+            def population_statistics():
+                return nn_impl.batch_normalization(x, pop_mean, pop_var, offset, scale, _EPSILON)
+
+            return control_flow_ops.cond(constant_op.constant(trainable, dtype=dtypes.bool), batch_statistics, population_statistics)
 
     def _layer_normalization(self, inputs, scope=None):
         """
@@ -178,32 +213,37 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
 
         c, h = state  # memory cell, hidden unit
         
-        input_size = inputs.get_shape().as_list()[1]
-        t, x = array_ops.split(inputs, [1, input_size-1], axis=1)
+        if self._time_aware:
+            input_size = inputs.get_shape().as_list()[1]
+            t, inputs = array_ops.split(inputs, [1, input_size-1], axis=1)
 
-        # Dealing with time irregularity
-        # Map elapse time in days or months
-        T = self._map_elapse_time(t)
+            # Dealing with time irregularity
+            # Map elapse time in days or months
+            T = self._map_elapse_time(t)
 
-        # Decompose the previous cell if there is a elapse time
-        with vs.variable_scope("tlstm_weight"):
-            self.W_decomp = vs.get_variable('Decomposition_Hidden_weight', shape=[self._num_units, self._num_units])
-            self.b_decomp = vs.get_variable('Decomposition_Hidden_bias_enc', shape=[self._num_units])
+            # Decompose the previous cell if there is a elapse time
+            with vs.variable_scope("tlstm_weight"):
+                self.W_decomp = vs.get_variable('Decomposition_Hidden_weight', shape=[self._num_units, self._num_units])
+                self.b_decomp = vs.get_variable('Decomposition_Hidden_bias_enc', shape=[self._num_units])
 
-        C_ST = gen_math_ops.tanh(math_ops.matmul(c, self.W_decomp) + self.b_decomp)
-        C_ST_dis = math_ops.multiply(T, C_ST)
-        # if T is 0, then the weight is one
-        c = c - C_ST + C_ST_dis
+            C_ST = gen_math_ops.tanh(math_ops.matmul(c, self.W_decomp) + self.b_decomp)
+            C_ST_dis = math_ops.multiply(T, C_ST)
+            # if T is 0, then the weight is one
+            c = c - C_ST + C_ST_dis
 
-        args = array_ops.concat([x, h], 1)
-        concat = self._linear(args, [args.get_shape()[-1], 4 * self._num_units])
+        if self._batch_norm:
+            xh = self._linear(inputs, [inputs.get_shape()[-1], 4 * self._num_units], bias=False, scope="x_weight")
+            hh = self._linear(h,      [h.get_shape()[-1], 4 * self._num_units],      bias=False, scope="h_weight")
+            bias = vs.get_variable('bias', [4 * self._num_units])
+
+            bn_xh  = self._batch_normalization(xh, 'xh', self.trainable)
+            bn_hh  = self._batch_normalization(hh, 'hh', self.trainable)
+            concat = bn_xh + bn_hh + bias
+        else:
+            args = array_ops.concat([inputs, h], 1)
+            concat = self._linear(args, [args.get_shape()[-1], 4 * self._num_units])
 
         i, j, f, o = array_ops.split(value=concat, num_or_size_splits=4, axis=1)
-        if self._layer_norm:
-            i = self._layer_normalization(i, "layer_norm_i")
-            j = self._layer_normalization(j, "layer_norm_j")
-            f = self._layer_normalization(f, "layer_norm_f")
-            o = self._layer_normalization(o, "layer_norm_o")
         g = self._activation(j)  # gating
 
         # variational dropout
@@ -217,12 +257,12 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
 
         # recurrent dropout
         gated_in = nn_ops.dropout(gated_in, self._keep_prob_h)
+        new_c = memory + gated_in
 
         # layer normalization for memory cell (original paper didn't use for memory cell).
-        # if self._layer_norm:
-        #     new_c = self._layer_normalization(new_c, "state")
+        if self._batch_norm:
+            new_c = self._batch_normalization(new_c, "state", self.trainable)
 
-        new_c = memory + gated_in
         new_h = self._activation(new_c) * math_ops.sigmoid(o)
         new_state = rnn_cell_impl.LSTMStateTuple(new_c, new_h)
         return new_h, new_state
