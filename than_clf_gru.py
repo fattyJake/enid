@@ -20,6 +20,11 @@ class T_HAN(object):
 
     Parameters
     ----------
+    mode: str
+        'train' or 'deploy' mode
+
+    Train Mode Parameters
+    ----------
     max_sequence_length: int
         fixed padding latest number of time buckets
 
@@ -47,108 +52,410 @@ class T_HAN(object):
     dropout_keep_prob: float
         percentage of neurons to keep from dropout regularization each layer
 
-    l2_reg_lambda: float, default 0
+    l2_reg_lambda: float, optional (default: .0)
         L2 regularization lambda for fully-connected layer to prevent potential overfitting
 
-    objective: str, default 'ce'
+    objective: str, optional (default: 'ce')
         the objective function (loss) model trains on; if 'ce', use cross-entropy, if 'auc', use AUROC as objective
 
-    initializer: tf tensor initializer object, default tf.orthogonal_initializer()
+    initializer: tf tensor initializer object, optional (default: tf.orthogonal_initializer())
         initializer for fully connected layer weights
+
+    Deploy Mode Parameters
+    ----------
+    model_path: str
+        the path to store the model
+    
+    step: int, optional (defult None)
+        if not None, load specific model with given step    
 
     Examples
     --------
     >>> from enid.than_clf import T_HAN
-    >>> rnn = T_HAN(max_sequence_length=50, max_sentence_length=20,
+    >>> model_1 = T_HAN('train', max_sequence_length=50, max_sentence_length=20,
             hidden_size=128, num_classes=2, pretrain_embedding=emb,
             learning_rate=0.05, decay_steps=5000, decay_rate=0.9,
             dropout_keep_prob=0.8, l2_reg_lambda=0.0,
             objective='ce')
+    >>> model_1.train(t_train=T, x_train=X,
+                    y_train=y, dev_sample_percentage=0.01,
+                    num_epochs=20, batch_size=64,
+                    evaluate_every=100, model_path='./model/')
+    >>> model_2 = T_HAN('deploy', model_path='./model')
+    >>> model_2.deploy(t_test=T_test, x_test=X_test)
+    array([9.9515426e-01,
+           4.6948572e-03,
+           3.1738445e-02,,
+           ...,
+           9.9895418e-01,
+           5.6348788e-04,
+           9.9940193e-01], dtype=float32)
     """
-    def __init__(
-        self, max_sequence_length, max_sentence_length, num_classes, hidden_size, pretrain_embedding,
-        learning_rate, decay_steps, decay_rate, dropout_keep_prob, l2_reg_lambda=0.0, objective='ce',
-        initializer=tf.orthogonal_initializer()):
+    def __init__(self, mode, **kwargs):
 
         """init all hyperparameter here"""
         tf.reset_default_graph()
+        assert mode in ['train', 'deploy'], f'AttributeError: mode only acccept "train" or "deploy", got {mode} instead.'
+        self.mode = mode
 
-        self.num_classes = num_classes
-        self.pretrain_embedding = pretrain_embedding
-        self.max_sequence_length = max_sequence_length
-        self.max_sentence_length = max_sentence_length
-        self.hidden_size = hidden_size
-        self.dropout_keep_prob = dropout_keep_prob
-        self.l2_reg_lambda = l2_reg_lambda
-        self.learning_rate = learning_rate
-        self.initializer = initializer
+        if self.mode == 'train':
 
-        self.global_step = tf.Variable(0, trainable=False, name="Global_Step")
-        self.epoch_step = tf.Variable(0, trainable=False, name="Epoch_Step")
-        self.epoch_increment = tf.assign(self.epoch_step, tf.add(self.epoch_step, tf.constant(1)))
-        self.decay_steps, self.decay_rate = decay_steps, decay_rate
+            self.num_classes = kwargs['num_classes']
+            self.pretrain_embedding = kwargs['pretrain_embedding']
+            self.max_sequence_length = kwargs['max_sequence_length']
+            self.max_sentence_length = kwargs['max_sentence_length']
+            self.hidden_size = kwargs['hidden_size']
+            self.dropout_keep_prob = kwargs['dropout_keep_prob']
+            self.l2_reg_lambda = kwargs.get('l2_reg_lambda', 0.0)
+            self.learning_rate = kwargs['learning_rate']
+            self.initializer = kwargs.get('initializer', tf.orthogonal_initializer())
+            self.objective = kwargs.get('objective', 'ce')
 
-        # add placeholder
-        self.input_x = tf.placeholder(tf.int32, [None, self.max_sequence_length, self.max_sentence_length], name="input_x") # X [instance_size, num_bucket, sentence_length]
-        self.input_t = tf.placeholder(tf.int32, [None, self.max_sequence_length],                           name="input_t") # T [instance_size, num_bucket]
-        self.input_y = tf.placeholder(tf.int32, [None, self.num_classes],                                   name="input_y") # y [instance_size, num_classes]
+            self.graph = tf.get_default_graph()
+            with self.graph.as_default():
+                self.global_step = tf.Variable(0, trainable=False, name="Global_Step")
+                self.epoch_step = tf.Variable(0, trainable=False, name="Epoch_Step")
+                self.epoch_increment = tf.assign(self.epoch_step, tf.add(self.epoch_step, tf.constant(1)))
+                self.decay_steps, self.decay_rate = kwargs['decay_steps'], kwargs['decay_rate']
+
+                # add placeholder
+                self.input_x = tf.placeholder(tf.int32, [None, self.max_sequence_length, self.max_sentence_length], name="input_x") # X [instance_size, num_bucket, sentence_length]
+                self.input_t = tf.placeholder(tf.int32, [None, self.max_sequence_length],                           name="input_t") # T [instance_size, num_bucket]
+                self.input_y = tf.placeholder(tf.int32, [None, self.num_classes],                                   name="input_y") # y [instance_size, num_classes]
+                
+                with tf.name_scope("embedding"):
+                    self.emb_size = self.pretrain_embedding.shape[1]
+                    embedding_matrix = tf.concat([self.pretrain_embedding, tf.zeros((1, self.emb_size))], axis=0)
+                    self.Embedding = tf.Variable(embedding_matrix, trainable=True, dtype=tf.float32, name='embedding')
+                    self.W_projection = tf.get_variable("W_projection", shape=[self.hidden_size, self.num_classes], initializer=self.initializer)  # [embed_size,label_size]
+                    self.b_projection = tf.get_variable("b_projection", shape=[self.num_classes])
+
+                # 1. get emebedding of tokens
+                self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [instance_size, num_bucket, sentence_length, embedding_size]
+                self.batch_size = tf.shape(self.input)[0]
+                
+                # 2. token level attention
+                self.input = tf.reshape(self.input, shape=[-1, self.max_sentence_length, self.emb_size])
+
+                self.tlstm_cell_fw = TLSTMCell(self.hidden_size, False, dropout_keep_prob_in=self.dropout_keep_prob,
+                                               dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
+                                               dropout_keep_prob_gate=self.dropout_keep_prob, dropout_keep_prob_forget=self.dropout_keep_prob)
+                self.tlstm_cell_bw = TLSTMCell(self.hidden_size, False, dropout_keep_prob_in=self.dropout_keep_prob,
+                                               dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
+                                               dropout_keep_prob_gate=self.dropout_keep_prob, dropout_keep_prob_forget=self.dropout_keep_prob)
+
+                self.hidden_state, _ = tf.nn.bidirectional_dynamic_rnn(self.tlstm_cell_fw, self.tlstm_cell_bw, self.input, dtype=tf.float32, time_major=False)
+                self.hidden_state = tf.concat(self.hidden_state, axis=2) # [batch_size*num_sentences, num_tokens, hidden_size*2]
+
+                sentence_representation = self._attention_token_level(self.hidden_state)  # output:[batch_size*num_sentences,hidden_size*2]
+                sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.hidden_size * 2]) # shape:[batch_size,num_sentences,hidden_size*2]
+                
+                # 3. time-aware lstm of sentence sequence
+                # make scan_time [batch_size x seq_length x 1]
+                scan_time = tf.reshape(self.input_t, [tf.shape(self.input_t)[0], tf.shape(self.input_t)[1], 1])
+                concat_input = tf.concat([tf.cast(scan_time, tf.float32), sentence_representation], 2) # [batch_size x seq_length x num_filters_total+1]
+
+                self.tlstm_cell = TLSTMCell(self.hidden_size, True, dropout_keep_prob_in=self.dropout_keep_prob,
+                                            dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
+                                            dropout_keep_prob_gate=self.dropout_keep_prob, dropout_keep_prob_forget=self.dropout_keep_prob)
+                
+                self.hidden_state_sentence, _ = tf.nn.dynamic_rnn(self.tlstm_cell, concat_input, dtype=tf.float32, time_major=False)
+                self.instance_representation = self._attention_sentence_level(self.hidden_state_sentence)
+                with tf.name_scope("output"):
+                    self.logits = tf.matmul(self.instance_representation, self.W_projection) + self.b_projection # [batch_size, self.num_classes]. main computation graph is here.
+                    self.probs = tf.nn.softmax(self.logits, name="probs")
+
+                assert self.objective in ['ce', 'auc'], 'AttributeError: objective only acccept "ce" or "auc", got {}'.format(str(self.objective))
+                if self.objective == 'ce':  self.loss_val = self._loss(self.l2_reg_lambda)
+                if self.objective == 'auc': self.loss_val = self._loss_roc_auc(self.l2_reg_lambda)
+                self._train()
+                self.predictions = tf.argmax(self.logits, axis=1, name="predictions")  # shape:[None,]
+
+                # performance
+                with tf.name_scope("performance"):
+                    _, self.auc = tf.metrics.auc(self.input_y, self.probs, num_thresholds=3000, curve="ROC", name="auc")
+                
+                self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
+                self.learning_rate_sum = tf.summary.scalar("learning_rate", self.learning_rate)
+                self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
+                self.merged_sum = tf.summary.merge_all()
+
+            config = tf.ConfigProto(log_device_placement=True)
+            config.gpu_options.allow_growth=True
+            self.sess = tf.Session(config=config, graph=self.graph)
+
+        if self.mode == 'deploy':
+            self.model_path = kwargs['model_path']
+            self.step = kwargs['step']
+            self.sess = tf.Session()
+            self.sess.as_default()
+
+            # Recreate the network graph. At this step only graph is created.
+            if self.step:
+                saver = tf.train.import_meta_graph(os.path.join(self.model_path.rstrip('/'), 'model-'+str(self.step)+'.meta'))
+                saver.restore(self.sess, os.path.join(self.model_path.rstrip('/'), 'model-'+str(self.step)))
+            else:
+                saver = tf.train.import_meta_graph(os.path.join(self.model_path.rstrip('/'), 'model.meta'))
+                saver.restore(self.sess, tf.train.latest_checkpoint(self.model_path))
+            self.graph = tf.get_default_graph()
+
+            # restore graph names for predictions
+            self.probs = self.graph.get_tensor_by_name("output/probs:0")
+            self.input_x = self.graph.get_tensor_by_name("input_x:0")
+            self.input_t = self.graph.get_tensor_by_name("input_t:0")
+
+    def __del__(self):
+        self.sess.close()
+        tf.reset_default_graph()
+
+    def train(self, t_train, x_train, y_train, dev_sample_percentage, num_epochs, batch_size, evaluate_every, model_path, debug=False):
+        """
+        Training module for T_HAN objectives
         
-        with tf.name_scope("embedding"):
-            self.emb_size = self.pretrain_embedding.shape[1]
-            embedding_matrix = tf.concat([self.pretrain_embedding, tf.zeros((1, self.emb_size))], axis=0)
-            self.Embedding = tf.Variable(embedding_matrix, trainable=True, dtype=tf.float32, name='embedding')
-            self.W_projection = tf.get_variable("W_projection", shape=[self.hidden_size, self.num_classes], initializer=self.initializer)  # [embed_size,label_size]
-            self.b_projection = tf.get_variable("b_projection", shape=[self.num_classes])
+        Parameters
+        ----------
+        model: object of T_HAN
+            initialized Time-Aware HAN model
 
-        # 1. get emebedding of tokens
-        self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [instance_size, num_bucket, sentence_length, embedding_size]
-        self.batch_size = tf.shape(self.input)[0]
+        t_train: 2-D numpy array, shape (num_exemplars, num_bucket)
+            variable indices all buckets and sections
+
+        x_train: 2-D numpy array, shape (num_exemplars, num_bucket)
+            variable indices all variables
+
+        y_train: 2-D numpy array, shape (num_exemplars, num_classes)
+            whole training ground truth
+            
+        dev_sample_percentage: float
+            percentage of x_train seperated from training process and used for validation
+
+        num_epochs: int
+            number of epochs of training, one epoch means finishing training entire training set
+
+        batch_size: int
+            size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
+
+        evaluate_every: int
+            number of steps to perform a evaluation on development (validation) set and print out info
+
+        model_path: str
+            the path to store the model
+        """
+
+        # get number of input exemplars
+        training_size = y_train.shape[0]
+
+        dev_sample_index = -1 * int(dev_sample_percentage * float(training_size))
+        t_train, t_dev = t_train[:dev_sample_index], t_train[dev_sample_index:]
+        x_train, x_dev = x_train[:dev_sample_index], x_train[dev_sample_index:]
+        y_train, y_dev = y_train[:dev_sample_index], y_train[dev_sample_index:]
+        training_size = y_train.shape[0]
+
+        # configurate TensorFlow session, enable GPU accelerated if possible
+
+        saver = tf.train.Saver()
+
+        # initialize all variables
+        self.sess.run(tf.global_variables_initializer())
+        self.sess.run(tf.local_variables_initializer())
+
+        if debug: self.sess = tf_debug.LocalCLIDebugWrapperSession(self.sess)
+        print('start time:', datetime.now())
+        # create model root path if not exists
+        if not os.path.exists(model_path): os.mkdir(model_path)
+
+        writer_train = tf.summary.FileWriter(os.path.join(model_path, 'train'))
+        writer_val = tf.summary.FileWriter(os.path.join(model_path, 'vali'))
+        writer_train.add_graph(self.sess.graph)
         
-        # 2. token level attention
-        self.input = tf.reshape(self.input, shape=[-1, self.max_sentence_length, self.emb_size])
+        # get current epoch
+        curr_epoch = self.sess.run(self.epoch_step)
+        for epoch in range(curr_epoch, num_epochs):
+            print('Epoch', epoch+1, '...')
+            counter = 0
 
-        self.tlstm_cell_fw = TLSTMCell(self.hidden_size, False, dropout_keep_prob_in=self.dropout_keep_prob,
-                                       dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
-                                       dropout_keep_prob_gate=self.dropout_keep_prob, dropout_keep_prob_forget=self.dropout_keep_prob)
-        self.tlstm_cell_bw = TLSTMCell(self.hidden_size, False, dropout_keep_prob_in=self.dropout_keep_prob,
-                                       dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
-                                       dropout_keep_prob_gate=self.dropout_keep_prob, dropout_keep_prob_forget=self.dropout_keep_prob)
+            # loop batch training
+            for start, end in zip(range(0, training_size, batch_size), range(batch_size, training_size, batch_size)):
+                epoch_x = x_train[start:end]
+                epoch_t = t_train[start:end]
+                epoch_y = y_train[start:end]
 
-        self.hidden_state, _ = tf.nn.bidirectional_dynamic_rnn(self.tlstm_cell_fw, self.tlstm_cell_bw, self.input, dtype=tf.float32, time_major=False)
-        self.hidden_state = tf.concat(self.hidden_state, axis=2) # [batch_size*num_sentences, num_tokens, hidden_size*2]
+                # create model inputs
+                feed_dict = {self.input_x: epoch_x, self.input_t: epoch_t, self.input_y: epoch_y}
 
-        sentence_representation = self._attention_token_level(self.hidden_state)  # output:[batch_size*num_sentences,hidden_size*2]
-        sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.hidden_size * 2]) # shape:[batch_size,num_sentences,hidden_size*2]
+                # train one step
+                curr_loss, _, merged_sum = self.sess.run([self.loss_val, self.train_op, self.merged_sum], feed_dict)
+                writer_train.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
+                counter = counter+1
+
+                # evaluation
+                if counter % evaluate_every == 0:
+                    #train_accu, _ = model.auc.eval(feed_dict, session=sess)
+                    dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, batch_size, writer_val)
+                    print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
+            self.sess.run(self.epoch_increment)
+
+            # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
+            saver.save(self.sess, os.path.join(model_path, 'model'), global_step=self.global_step)
+            print('='*100)
+
+        print('End time:', datetime.now())
+
+    def deploy(self, t_test, x_test):
+        """
+        Testing module for T_HAN models
         
-        # 3. time-aware lstm of sentence sequence
-        # make scan_time [batch_size x seq_length x 1]
-        scan_time = tf.reshape(self.input_t, [tf.shape(self.input_t)[0], tf.shape(self.input_t)[1], 1])
-        concat_input = tf.concat([tf.cast(scan_time, tf.float32), sentence_representation], 2) # [batch_size x seq_length x num_filters_total+1]
+        Parameters
+        ----------
+        t_test: 2-D numpy array, shape (num_exemplars, num_bucket)
+            variable indices all buckets and sections
 
-        self.tlstm_cell = TLSTMCell(self.hidden_size, True, dropout_keep_prob_in=self.dropout_keep_prob,
-                                    dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
-                                    dropout_keep_prob_gate=self.dropout_keep_prob, dropout_keep_prob_forget=self.dropout_keep_prob)
+        x_test: 2-D numpy array, shape (num_exemplars, num_bucket)
+            variable indices all variables
+
+        Returns
+        ----------
+        y_probs: 1-D numpy array, shape (num_exemplar,)
+                predicted target values based on trained model
+        """
+        number_examples = t_test.shape[0]
+        if number_examples < 128:
+            y_probs = self.sess.run(self.probs, {self.input_x: 'x_test', self.input_t: t_test})[:,0]
+        else:
+            y_probs = np.empty((0))
+            for start, end in zip(range(0,number_examples,128), range(128,number_examples,128)):
+                feed_dict = {self.input_x: x_test[start:end],
+                             self.input_t: t_test[start:end]}
+                probs = self.sess.run(self.probs, feed_dict)[:,0]
+                y_probs = np.concatenate([y_probs, probs])
+            feed_dict = {self.input_x: x_test[end:],
+                         self.input_t: t_test[end:]}
+            probs = self.sess.run(self.probs, feed_dict)[:,0]
+            y_probs = np.concatenate([y_probs, probs])
+        # cali = pickle.load(open(os.path.join(os.path.dirname(__file__), 'pickle_files','er_calibration'), 'rb'))
+        return y_probs
+
+    ###########################  PRIVATE FUNCTIONS  ###########################
+
+    def _attention_token_level(self, hidden_state):
+        """
+        @param hidden_state: [batch_size*num_sentences,sentence_length,hidden_size*2]
+        @return representation [batch_size*num_sentences,hidden_size*2]
+        """
+        with tf.name_scope("token_level_attention"):
+            self.W_w_attention_token = tf.get_variable("W_w_attention_token",
+                                                      shape=[self.hidden_size * 2, self.hidden_size * 2],
+                                                      initializer=self.initializer)
+            self.W_b_attention_token = tf.get_variable("W_b_attention_token", shape=[self.hidden_size * 2])
+            self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.hidden_size * 2],
+                                                        initializer=tf.random_normal_initializer(stddev=0.1))
         
-        self.hidden_state_sentence, _ = tf.nn.dynamic_rnn(self.tlstm_cell, concat_input, dtype=tf.float32, time_major=False)
-        self.instance_representation = self._attention_sentence_level(self.hidden_state_sentence)
-        with tf.name_scope("output"):
-            self.logits = tf.matmul(self.instance_representation, self.W_projection) + self.b_projection # [batch_size, self.num_classes]. main computation graph is here.
-            self.probs = tf.nn.softmax(self.logits, name="probs")
+        hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.hidden_size * 2])
+        hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
+        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sentence_length, self.hidden_size * 2])
+        hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_token)
+        attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
+        attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)  # [batch_size*num_sentences,1]
+        p_attention = tf.nn.softmax(attention_logits - attention_logits_max)  # [batch_size*num_sentences,sentence_length]
+        p_attention_expanded = tf.expand_dims(p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
+        sentence_representation = tf.multiply(p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, hidden_size*2]
+        sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, hidden_size*2]
+        return sentence_representation
 
-        assert objective in ['ce', 'auc'], 'AttributeError: objective only acccept "ce" or "auc", got {}'.format(str(objective))
-        if objective == 'ce':  self.loss_val = self._loss(self.l2_reg_lambda)
-        if objective == 'auc': self.loss_val = self._loss_roc_auc(self.l2_reg_lambda)
-        self.train_op = self._train()
-        self.predictions = tf.argmax(self.logits, axis=1, name="predictions")  # shape:[None,]
-
-        # performance
-        with tf.name_scope("performance"):
-            _, self.auc = tf.metrics.auc(self.input_y, self.probs, num_thresholds=3000, curve="ROC", name="auc")
+    def _attention_sentence_level(self, hidden_state_sentence):
+        """
+        @param hidden_state_sentence: [batch_size, num_sentences, hidden_size]
+        @return representation:[batch_size, hidden_size]
+        """
+        with tf.name_scope("sentence_level_attention"):
+            self.W_w_attention_sentence = tf.get_variable("W_w_attention_sentence",
+                                                          shape=[self.hidden_size, self.hidden_size],
+                                                          initializer=self.initializer)
+            self.W_b_attention_sentence = tf.get_variable("W_b_attention_sentence", shape=[self.hidden_size])
+            self.context_vecotor_sentence = tf.get_variable("what_is_the_informative_sentence",
+                                                            shape=[self.hidden_size], initializer=tf.random_normal_initializer(stddev=0.1))
         
-        self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
-        self.learning_rate_sum = tf.summary.scalar("learning_rate", self.learning_rate)
-        self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
-        self.merged_sum = tf.summary.merge_all()
+        hidden_state_2 = tf.reshape(hidden_state_sentence, shape=[-1, self.hidden_size])
+        hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_sentence) + self.W_b_attention_sentence)
+        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sequence_length, self.hidden_size])
+        hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_sentence)
+        attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)
+        attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)
+        p_attention = tf.nn.softmax(attention_logits - attention_logits_max)
+        p_attention_expanded = tf.expand_dims(p_attention, axis=2)
+        instance_representation = tf.multiply(p_attention_expanded, hidden_state_sentence)
+        instance_representation = tf.reduce_sum(instance_representation, axis=1)
+        return instance_representation
+
+    def _train(self):
+        """
+        based on the loss, use Adam to update parameter
+        """
+        learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps,self.decay_rate, staircase=True)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate)
+        self.add_global = self.step.assign_add(1)
+        with tf.control_dependencies([self.add_global]):
+            self.train_op = self.optimizer.minimize(self.loss)
+
+    def _loss(self, l2_reg_lambda):
+        with tf.name_scope("loss"):
+            #input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+            #output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+            # losses = tf.nn.weighted_cross_entropy_with_logits(targets=self.input_y, logits=self.logits, pos_weight=self.pos_weight)
+            losses = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.input_y, logits=self.logits)
+            loss = tf.reduce_mean(losses)
+            l2_losses = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_reg_lambda
+            loss = tf.identity(loss + l2_losses, name='loss')
+        return loss
+
+    def _loss_roc_auc(self, l2_reg_lambda):
+        """
+        ROC AUC Score.
+        Approximates the Area Under Curve score, using approximation based on
+        the Wilcoxon-Mann-Whitney U statistic.
+        Yan, L., Dodier, R., Mozer, M. C., & Wolniewicz, R. (2003).
+        Optimizing Classifier Performance via an Approximation to the Wilcoxon-Mann-Whitney Statistic.
+        Measures overall performance for a full range of threshold levels.
+        """
+        pos = tf.boolean_mask(self.logits, tf.cast(self.input_y, tf.bool))
+        neg = tf.boolean_mask(self.logits, ~tf.cast(self.input_y, tf.bool))
+
+        pos = tf.expand_dims(pos, 0)
+        neg = tf.expand_dims(neg, 1)
+
+        # original paper suggests performance is robust to exact parameter choice
+        gamma = 0.2
+        p     = 3
+
+        difference = tf.zeros_like(pos * neg) + pos - neg - gamma
+        masked = tf.boolean_mask(difference, difference < 0.0)
+        loss = tf.reduce_sum(tf.pow(-masked, p))
+        l2_losses = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_reg_lambda
+        loss = tf.identity(loss + l2_losses, name='loss')
+        return loss
+
+    def _do_eval(self, eval_x, eval_t, eval_y, batch_size, writer_val):
+        """
+        Evaluate development in batch (if direcly force sess run entire development set, may raise OOM error)
+        """
+        number_examples = len(eval_x)
+        eval_loss, eval_counter = 0.0, 0
+        eval_probs = np.empty((0, self.num_classes))
+        for start, end in zip(range(0,number_examples,batch_size), range(batch_size,number_examples,batch_size)):
+            feed_dict = {self.input_x: eval_x[start:end],
+                         self.input_t: eval_t[start:end],
+                         self.input_y: eval_y[start:end]}
+            curr_eval_loss, curr_probs, merged_sum = self.sess.run([self.loss_val, self.probs, self.merged_sum], feed_dict)
+            writer_val.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
+            
+            eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
+        feed_dict = {self.input_x: eval_x[end:],
+                     self.input_t: eval_t[end:],
+                     self.input_y: eval_y[end:]}
+        curr_probs = self.sess.run(self.probs, feed_dict)
+        eval_probs = np.concatenate([eval_probs, curr_probs])
+        eval_acc   = self.sess.run(self.auc, {self.input_y: eval_y, self.probs: eval_probs})
+        return eval_loss/float(eval_counter), eval_acc
 
     # def _init_weights(self, input_size, output_dim, name, std=0.1, reg=None):
     #     return tf.get_variable(name,shape=[input_size, output_dim],initializer=self.initializer, regularizer = reg)
@@ -260,350 +567,3 @@ class T_HAN(object):
     #     concat_input = tf.concat([tf.cast(scan_time, tf.float32), scan_input],2) # [seq_length x batch_size x hidden_size*2+1]
     #     packed_hidden_states = tf.scan(self._TLSTM_Unit, concat_input, initializer=ini_state_cell)
     #     return packed_hidden_states[:, 0, :, :]
-
-    def _attention_token_level(self, hidden_state):
-        """
-        @param hidden_state: [batch_size*num_sentences,sentence_length,hidden_size*2]
-        @return representation [batch_size*num_sentences,hidden_size*2]
-        """
-        with tf.name_scope("token_level_attention"):
-            self.W_w_attention_token = tf.get_variable("W_w_attention_token",
-                                                      shape=[self.hidden_size * 2, self.hidden_size * 2],
-                                                      initializer=self.initializer)
-            self.W_b_attention_token = tf.get_variable("W_b_attention_token", shape=[self.hidden_size * 2])
-            self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.hidden_size * 2],
-                                                        initializer=tf.random_normal_initializer(stddev=0.1))
-        
-        hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.hidden_size * 2])
-        hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
-        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sentence_length, self.hidden_size * 2])
-        hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_token)
-        attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
-        attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)  # [batch_size*num_sentences,1]
-        p_attention = tf.nn.softmax(attention_logits - attention_logits_max)  # [batch_size*num_sentences,sentence_length]
-        p_attention_expanded = tf.expand_dims(p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
-        sentence_representation = tf.multiply(p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, hidden_size*2]
-        sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, hidden_size*2]
-        return sentence_representation
-
-    def _attention_sentence_level(self, hidden_state_sentence):
-        """
-        @param hidden_state_sentence: [batch_size, num_sentences, hidden_size]
-        @return representation:[batch_size, hidden_size]
-        """
-        with tf.name_scope("sentence_level_attention"):
-            self.W_w_attention_sentence = tf.get_variable("W_w_attention_sentence",
-                                                          shape=[self.hidden_size, self.hidden_size],
-                                                          initializer=self.initializer)
-            self.W_b_attention_sentence = tf.get_variable("W_b_attention_sentence", shape=[self.hidden_size])
-            self.context_vecotor_sentence = tf.get_variable("what_is_the_informative_sentence",
-                                                            shape=[self.hidden_size], initializer=tf.random_normal_initializer(stddev=0.1))
-        
-        hidden_state_2 = tf.reshape(hidden_state_sentence, shape=[-1, self.hidden_size])
-        hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_sentence) + self.W_b_attention_sentence)
-        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sequence_length, self.hidden_size])
-        hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_sentence)
-        attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)
-        attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)
-        p_attention = tf.nn.softmax(attention_logits - attention_logits_max)
-        p_attention_expanded = tf.expand_dims(p_attention, axis=2)
-        instance_representation = tf.multiply(p_attention_expanded, hidden_state_sentence)
-        instance_representation = tf.reduce_sum(instance_representation, axis=1)
-        return instance_representation
-
-    def _train(self):
-        """
-        based on the loss, use Adam to update parameter
-        """
-        #learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps,self.decay_rate, staircase=True)
-        train_op = tf.contrib.layers.optimize_loss(self.loss_val, global_step=self.global_step, learning_rate=self.learning_rate, optimizer="Adam")
-        return train_op
-
-    def _loss(self, l2_reg_lambda):
-        with tf.name_scope("loss"):
-            #input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
-            #output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
-            # losses = tf.nn.weighted_cross_entropy_with_logits(targets=self.input_y, logits=self.logits, pos_weight=self.pos_weight)
-            losses = tf.nn.softmax_cross_entropy_with_logits_v2(labels=self.input_y, logits=self.logits)
-            loss = tf.reduce_mean(losses)
-            l2_losses = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_reg_lambda
-            loss = tf.identity(loss + l2_losses, name='loss')
-        return loss
-
-    def _loss_roc_auc(self, l2_reg_lambda):
-        """
-        ROC AUC Score.
-        Approximates the Area Under Curve score, using approximation based on
-        the Wilcoxon-Mann-Whitney U statistic.
-        Yan, L., Dodier, R., Mozer, M. C., & Wolniewicz, R. (2003).
-        Optimizing Classifier Performance via an Approximation to the Wilcoxon-Mann-Whitney Statistic.
-        Measures overall performance for a full range of threshold levels.
-        """
-        pos = tf.boolean_mask(self.logits, tf.cast(self.input_y, tf.bool))
-        neg = tf.boolean_mask(self.logits, ~tf.cast(self.input_y, tf.bool))
-
-        pos = tf.expand_dims(pos, 0)
-        neg = tf.expand_dims(neg, 1)
-
-        # original paper suggests performance is robust to exact parameter choice
-        gamma = 0.2
-        p     = 3
-
-        difference = tf.zeros_like(pos * neg) + pos - neg - gamma
-        masked = tf.boolean_mask(difference, difference < 0.0)
-        loss = tf.reduce_sum(tf.pow(-masked, p))
-        l2_losses = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_reg_lambda
-        loss = tf.identity(loss + l2_losses, name='loss')
-        return loss
-
-def train_han(model, t_train, x_train, y_train, dev_sample_percentage, num_epochs, batch_size, evaluate_every, model_path, debug=False):
-    """
-    Training module for T_HAN objectives
-    
-    Parameters
-    ----------
-    model: object of T_HAN
-        initialized Time-Aware HAN model
-
-    t_train: 2-D numpy array, shape (num_exemplars, num_bucket)
-        variable indices all buckets and sections
-
-    x_train: 2-D numpy array, shape (num_exemplars, num_bucket)
-        variable indices all variables
-
-    y_train: 2-D numpy array, shape (num_exemplars, num_classes)
-        whole training ground truth
-        
-    dev_sample_percentage: float
-        percentage of x_train seperated from training process and used for validation
-
-    num_epochs: int
-        number of epochs of training, one epoch means finishing training entire training set
-
-    batch_size: int
-        size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
-
-    evaluate_every: int
-        number of steps to perform a evaluation on development (validation) set and print out info
-
-    model_path: str
-        the path to store the model
-
-    Examples
-    --------
-    >>> from enid.than_clf import train_han
-    >>> train_han(model=rnn, t_train=T, x_train=X,
-                y_train=y, dev_sample_percentage=0.01,
-                num_epochs=20, batch_size=64,
-                evaluate_every=100, model_path='./model/')
-    """
-
-    # get number of input exemplars
-    training_size = y_train.shape[0]
-
-    dev_sample_index = -1 * int(dev_sample_percentage * float(training_size))
-    t_train, t_dev = t_train[:dev_sample_index], t_train[dev_sample_index:]
-    x_train, x_dev = x_train[:dev_sample_index], x_train[dev_sample_index:]
-    y_train, y_dev = y_train[:dev_sample_index], y_train[dev_sample_index:]
-    training_size = y_train.shape[0]
-
-    # initialize TensorFlow graph
-    graph = tf.get_default_graph()
-    with graph.as_default():
-
-        # configurate TensorFlow session, enable GPU accelerated if possible
-        config=tf.ConfigProto(log_device_placement=True)
-        config.gpu_options.allow_growth=True
-        sess =  tf.Session(config=config)
-        saver = tf.train.Saver()
-
-        # initialize all variables
-        sess.run(tf.global_variables_initializer())
-        sess.run(tf.local_variables_initializer())
-
-        if debug: sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-        print('start time:', datetime.now())
-        # create model root path if not exists
-        if not os.path.exists(model_path): os.mkdir(model_path)
-
-        writer_train = tf.summary.FileWriter(os.path.join(model_path, 'train'))
-        writer_val = tf.summary.FileWriter(os.path.join(model_path, 'vali'))
-        writer_train.add_graph(sess.graph)
-        
-        # get current epoch
-        curr_epoch = sess.run(model.epoch_step)
-        for epoch in range(curr_epoch, num_epochs):
-            print('Epoch', epoch+1, '...')
-            counter = 0
-
-            # loop batch training
-            for start, end in zip(range(0, training_size, batch_size), range(batch_size, training_size, batch_size)):
-                epoch_x = x_train[start:end]
-                epoch_t = t_train[start:end]
-                epoch_y = y_train[start:end]
-
-                # create model inputs
-                feed_dict = {model.input_x: epoch_x, model.input_t: epoch_t, model.input_y: epoch_y}
-
-                # train one step
-                curr_loss, _, merged_sum = sess.run([model.loss_val, model.train_op, model.merged_sum], feed_dict)
-                writer_train.add_summary(merged_sum, global_step=sess.run(model.global_step))
-                counter = counter+1
-
-                # evaluation
-                if counter % evaluate_every == 0:
-                    #train_accu = model.auc.eval(feed_dict, session=sess)
-                    dev_loss, dev_accu = _do_eval(sess, model, x_dev, t_dev, y_dev, batch_size, writer_val)
-                    print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
-            sess.run(model.epoch_increment)
-
-            # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
-            saver.save(sess, os.path.join(model_path, 'model'), global_step=model.global_step)
-            print('='*100)
-        sess.close()
-        print('End time:', datetime.now())
-
-def test_han(model_path, step=None, prob_norm='softmax', just_graph=False, **kwargs):
-    """
-    Testing module for T_HAN models
-    
-    Parameters
-    ----------
-    model_path: str
-        the path to store the model
-    
-    step: int
-        if not None, load specific model with given step
-
-    prob_norm: str, default 'softmax'
-        method to convert final layer scores into probabilities, either 'softmax' or 'sigmoid'
-
-    just_graph: boolean, default False
-        if False, just return tf graphs; if True, take input test data and return y_pred
-
-    **kwargs: dict, optional
-        Keyword arguments for test module, full documentation of parameters can be found in notes
-
-    Notes
-    ----------
-    If just_graph is False, test_rnn should take input test data as follows:
-
-    t_test: 2-D numpy array, shape (num_exemplars, num_bucket)
-        variable indices all buckets and sections
-
-    x_test: 2-D numpy array, shape (num_exemplars, num_bucket)
-        variable indices all variables
-
-    Returns
-    ----------
-    If just_graph=True:
-
-        sess: tf.Session object
-            tf Session for running TensorFlow operations
-
-        t: tf.placeholder
-            placeholder for t_test
-
-        x: tf.placeholder
-            placeholder for x_test
-
-        y_pred: tf.placeholder
-            placeholder for t_test
-
-    If just_graph=False:
-
-        y_probs: 1-D numpy array, shape (num_exemplar,)
-            predicted target values based on trained model
-
-    Examples
-    --------
-    >>> from enid.than_clf import test_han
-    >>> sess, t, x, y_pred = test_han('./model', prob_norm='sigmoid', just_graph=True)
-    >>> sess.run(y_pred, {x: x_test, t: t_test})
-    array([[4.8457133e-03, 9.9515426e-01],
-           [4.6948572e-03, 9.9530518e-01],
-           [3.1738445e-02, 9.6826160e-01],
-           ...,
-           [1.0457519e-03, 9.9895418e-01],
-           [5.6348788e-04, 9.9943644e-01],
-           [5.9802778e-04, 9.9940193e-01]], dtype=float32)
-    >>> sess.close()
-
-    >>> from enid.than_clf import test_han
-    >>> test_han('./model', t_test=T_test, x_test=X_test)
-    array([9.9515426e-01,
-           4.6948572e-03,
-           3.1738445e-02,,
-           ...,
-           9.9895418e-01,
-           5.6348788e-04,
-           9.9940193e-01], dtype=float32)
-    """
-
-    # clear TensorFlow graph
-    tf.reset_default_graph()
-    sess = tf.Session()
-    sess.as_default()
-
-    # Recreate the network graph. At this step only graph is created.
-    if step:
-        saver = tf.train.import_meta_graph(os.path.join(model_path.rstrip('/'), 'model-'+str(step)+'.meta'))
-        saver.restore(sess, os.path.join(model_path.rstrip('/'), 'model-'+str(step)))
-    else:
-        saver = tf.train.import_meta_graph(os.path.join(model_path.rstrip('/'), 'model.meta'))
-        saver.restore(sess, tf.train.latest_checkpoint(model_path))
-    graph = tf.get_default_graph()
-
-    # restore graph names for predictions
-    assert prob_norm in ['softmax', 'sigmoid'], 'AttributeError: prob_norm only acccept "softmax" or "sigmoid", got {}'.format(str(prob_norm))
-    if prob_norm == 'softmax': y_pred = graph.get_tensor_by_name("output/probs:0")
-    if prob_norm == 'sigmoid':
-        y_score = graph.get_tensor_by_name("output/scores:0")
-        y_pred = tf.sigmoid(y_score)
-    x = graph.get_tensor_by_name("input_x:0")
-    t = graph.get_tensor_by_name("input_t:0")
-
-    if just_graph: return sess, t, x, y_pred
-    else:
-        number_examples = kwargs['t_test'].shape[0]
-        if number_examples < 128:
-            y_probs = sess.run(y_pred, {x: kwargs['x_test'], t: kwargs['t_test']})[:,0]
-        else:
-            y_probs = np.empty((0))
-            for start, end in zip(range(0,number_examples,128), range(128,number_examples,128)):
-                feed_dict = {x: kwargs['x_test'][start:end],
-                             t: kwargs['t_test'][start:end]}
-                probs = sess.run(y_pred, feed_dict)[:,0]
-                y_probs = np.concatenate([y_probs, probs])
-            feed_dict = {x: kwargs['x_test'][end:],
-                         t: kwargs['t_test'][end:]}
-            probs = sess.run(y_pred, feed_dict)[:,0]
-            y_probs = np.concatenate([y_probs, probs])
-        # cali = pickle.load(open(os.path.join(os.path.dirname(__file__), 'pickle_files','er_calibration'), 'rb'))
-        sess.close()
-        return y_probs
-
-############################# PRIVATE FUNCTIONS ###############################
-
-def _do_eval(sess, model, eval_x, eval_t, eval_y, batch_size, writer_val):
-    """
-    Evaluate development in batch (if direcly force sess run entire development set, may raise OOM error)
-    """
-    number_examples = len(eval_x)
-    eval_loss, eval_counter = 0.0, 0
-    eval_probs = np.empty((0, model.num_classes))
-    for start, end in zip(range(0,number_examples,batch_size), range(batch_size,number_examples,batch_size)):
-        feed_dict = {model.input_x: eval_x[start:end],
-                     model.input_t: eval_t[start:end],
-                     model.input_y: eval_y[start:end]}
-        curr_eval_loss, curr_probs, merged_sum = sess.run([model.loss_val, model.probs, model.merged_sum], feed_dict)
-        writer_val.add_summary(merged_sum, global_step=sess.run(model.global_step))
-        
-        eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
-    feed_dict = {model.input_x: eval_x[end:],
-                 model.input_t: eval_t[end:],
-                 model.input_y: eval_y[end:]}
-    curr_probs = sess.run(model.probs, feed_dict)
-    eval_probs = np.concatenate([eval_probs, curr_probs])
-    eval_acc = sess.run(model.auc, {model.input_y: eval_y, model.probs: eval_probs})
-    return eval_loss/float(eval_counter), eval_acc

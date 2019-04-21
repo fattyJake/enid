@@ -88,21 +88,11 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
     >>> init_state = tlstm_cell.zero_state(batch_size=64, dtype=tf.float32)
     >>> output, _ = tf.nn.dynamic_rnn(tlstm_cell, input, initial_state=init_state)
     """
-    def __init__(self,
-                 num_units,
-                 time_aware,
-                 forget_bias=1.0,
-                 activation=None,
-                 reuse=None,
-                 batch_norm: bool=True,
-                 norm_shift: float=0.0,
-                 norm_gain: float=1.0,  # layer normalization
-                 dropout_keep_prob_in: float = 1.0,
-                 dropout_keep_prob_h: float=1.0,
-                 dropout_keep_prob_out: float=1.0,
-                 dropout_keep_prob_gate: float=1.0,
-                 dropout_keep_prob_forget: float=1.0
-                 ):
+    def __init__(self, num_units, time_aware, forget_bias=1.0, activation=None, reuse=None,
+                 batch_norm: bool=True, norm_shift: float=0.0, norm_gain: float=1.0,
+                 dropout_keep_prob_in: float = 1.0, dropout_keep_prob_h: float=1.0,
+                 dropout_keep_prob_out: float=1.0, dropout_keep_prob_gate: float=1.0,
+                 dropout_keep_prob_forget: float=1.0):
         """Initialize the basic LSTM cell."""
 
         super(TLSTMCell, self).__init__(_reuse=reuse)
@@ -161,21 +151,6 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
                 return nn_impl.batch_normalization(x, pop_mean, pop_var, offset, scale, _EPSILON)
 
             return control_flow_ops.cond(constant_op.constant(trainable, dtype=dtypes.bool), batch_statistics, population_statistics)
-
-    def _layer_normalization(self, inputs, scope=None):
-        """
-        :param inputs: (batch, shape)
-        :param scope:
-        :return : layer normalized inputs (batch, shape)
-        """
-        shape = inputs.get_shape()[-1:]
-        with vs.variable_scope(scope or "layer_norm"):
-            # Initialize beta and gamma for use by layer_norm.
-            g = vs.get_variable("gain", shape=shape, initializer=init_ops.constant_initializer(self._g))  # (shape,)
-            s = vs.get_variable("shift", shape=shape, initializer=init_ops.constant_initializer(self._b))  # (shape,)
-        m, v = nn_impl.moments(inputs, [1], keep_dims=True)  # (batch,)
-        normalized_input = (inputs - m) / math_ops.sqrt(v + _EPSILON)  # (batch, shape)
-        return normalized_input * g + s
 
     @staticmethod
     def _linear(x, weight_shape, bias=True, scope=None):
@@ -265,4 +240,5 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
 
         new_h = self._activation(new_c) * math_ops.sigmoid(o)
         new_state = rnn_cell_impl.LSTMStateTuple(new_c, new_h)
+        
         return new_h, new_state
