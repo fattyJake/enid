@@ -19,8 +19,9 @@
 ###############################################################################
 
 from . import data_helper
-from .vectorizer import Vectorizer
-from . import tlstm_clf
+from . import tlstm
+from . import claim2vec
 from . import than_clf
-from . import tlstm_reg
+from . import than_clf_cnn
+from . import than_clf_gru
 from . import visualizations

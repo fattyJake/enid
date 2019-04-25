@@ -8,12 +8,14 @@
 
 import os
 import math
+import collections
 import random
 import pickle
 
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+from .claim2vec_op import SkipGram
 
 from tensorflow.contrib.tensorboard.plugins import projector
 
@@ -64,9 +66,9 @@ class Claim2Vec(object):
         self.valid_size = valid_size
         self.vocabulary_size = len(dictionary)
 
-        self.data_index = 0
-        self.group_index = 0
-        self.epoch = 0
+        # self.data_index = 0
+        # self.group_index = 0
+        # self.epoch = 0
         self.learning_rate = learning_rate
         self.decay_steps = decay_steps
         self.decay_rate = decay_rate
@@ -121,6 +123,7 @@ class Claim2Vec(object):
                                                 global_step=self.step,
                                                 decay_steps=self.decay_steps,
                                                 decay_rate=self.decay_rate)
+                self.lr_sum = tf.summary.scalar("learning_rate", lr)
                 self.optimizer = tf.train.GradientDescentOptimizer(lr)
                 self.add_global = self.step.assign_add(1)
                 with tf.control_dependencies([self.add_global]):
@@ -148,7 +151,7 @@ class Claim2Vec(object):
         Parameters
         ----------
         data : list
-            training index data with format of [[1,573,203], [16389, 8792], ... [0, 4, 8394, 20094]]
+            training index data with format of [[1,573,203], [16389,8792], ... [0,4,8394,20094]]
             the index should be consistent with dictionary
 
         num_epoch : int
@@ -172,6 +175,9 @@ class Claim2Vec(object):
         config = tf.ConfigProto(log_device_placement=True)
         config.gpu_options.allow_growth = True
         session =  tf.Session(config=config, graph=self.graph)
+
+        # load skipgram opt
+        sg = SkipGram(self.batch_size)
         
         # Open a writer to write summaries.
         writer = tf.summary.FileWriter(log_dir, session.graph)
@@ -181,8 +187,8 @@ class Claim2Vec(object):
         print('Initialized')
     
         average_loss = 0
-        while self.epoch < num_epoch:
-            batch_inputs, batch_labels = self._generate_batch(data)
+        while sg.epoch < num_epoch:
+            batch_inputs, batch_labels = sg(data) #self._generate_batch(data)
             feed_dict = {self.train_inputs: batch_inputs,
                          self.train_labels: batch_labels}
     
@@ -244,75 +250,78 @@ class Claim2Vec(object):
     ###########################  PRIVATE FUNCTIONS  ###########################
 
     # Function to generate a training batch for the skip-gram model.
-    def _generate_batch(self, data):
-        batch = np.ndarray(shape=(self.batch_size), dtype=np.int32)
-        labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
-        
-        if self.data_index == len(data[self.group_index]):
-            self.data_index = 0
-            self.group_index += 1
-        
-        # locate group
-        data_ = data[self.group_index]
-        i = 0
-        while True:
-            input_ = data_[self.data_index]
-            if len(data_)-1 > self.batch_size-i: context_words = random.sample([w for w in data_ if w != input_], self.batch_size-i)
-            else: context_words = [w for w in data_ if w != input_]
-            for context_word in context_words:
-                batch[i] = input_
-                labels[i, 0] = context_word
-                i += 1
-                if i >= self.batch_size:
-                    self.data_index += 1
-                    return batch, labels
-            self.data_index += 1
-            if self.data_index == len(data_):
-                if self.group_index < len(data)-1: self.group_index += 1
-                else:
-                    self.group_index = 0
-                    self.epoch += 1
-                data_ = data[self.group_index]
-                self.data_index = 0
+    # def _generate_batch(self, data):
+    #     batch = np.ndarray(shape=(self.batch_size), dtype=np.int32)
+    #     labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
+    #     if self.group_index >= len(data)-1:
+    #         self.epoch += 1
+    #         self.data_index = 0
+    #         self.group_index = 0
+    #
+    #     if self.data_index == len(data[self.group_index]):
+    #         self.data_index = 0
+    #         self.group_index += 1
+    #
+    #     # locate group
+    #     data_ = data[self.group_index]
+    #     i = 0
+    #     while True:
+    #         input_ = data_[self.data_index]
+    #         if len(data_)-1 > self.batch_size-i: context_words = random.sample([data_[w] for w in range(len(data_)) if w != self.data_index], self.batch_size-i)
+    #         else: context_words = [w for w in data_ if w != input_]
+    #         for context_word in context_words:
+    #             batch[i] = input_
+    #             labels[i, 0] = context_word
+    #             i += 1
+    #             if i >= self.batch_size:
+    #                 self.data_index += 1
+    #                 return batch, labels
+    #         self.data_index += 1
+    #         if self.data_index == len(data_):
+    #             if self.group_index < len(data)-1: self.group_index += 1
+    #             else:
+    #                 self.group_index = 0
+    #                 self.epoch += 1
+    #             data_ = data[self.group_index]
+    #             self.data_index = 0
 
-#def generate_batch(batch_size, num_skips, skip_window):
-#    global data_index, group_index, epoch
-#    assert batch_size % num_skips == 0
-#    assert num_skips <= 2 * skip_window
-#    batch = np.ndarray(shape=(batch_size), dtype=np.int32)
-#    labels = np.ndarray(shape=(batch_size, 1), dtype=np.int32)
-#    span = 2 * skip_window + 1  # [ skip_window target skip_window ]
+#def generate_batch(self, data):
+#    assert self.batch_size % self.num_skips == 0
+#    assert self.num_skips <= 2 * self.skip_window
+#    batch = np.ndarray(shape=(self.batch_size), dtype=np.int32)
+#    labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
+#    span = 2 * self.skip_window + 1  # [ skip_window target skip_window ]
 #    buffer = collections.deque(maxlen=span)  # pylint: disable=redefined-builtin
 #    
 #    # locate group
-#    data_ = data[group_index]
-#    if data_index + span > len(data_):
-#        data_index = 0
-#    buffer.extend(data_[data_index:data_index + span])
-#    data_index += span
-#    for i in range(batch_size // num_skips):
-#        context_words = [w for w in range(span) if w != skip_window]
-#        words_to_use = random.sample(context_words, num_skips)
+#    data_ = data[self.group_index]
+#    if self.data_index + span > len(data_):
+#        self.data_index = 0
+#    buffer.extend(data_[self.data_index:self.data_index + span])
+#    self.data_index += span
+#    for i in range(self.batch_size // self.num_skips):
+#        context_words = [w for w in range(span) if w != self.skip_window]
+#        words_to_use = random.sample(context_words, self.num_skips)
 #        for j, context_word in enumerate(words_to_use):
-#            batch[i * num_skips + j] = buffer[skip_window]
-#            labels[i * num_skips + j, 0] = buffer[context_word]
-#        if data_index == len(data_):
-#            if group_index < len(data)-1: group_index += 1
+#            batch[i * self.num_skips + j] = buffer[self.skip_window]
+#            labels[i * self.num_skips + j, 0] = buffer[context_word]
+#        if self.data_index == len(data_):
+#            if self.group_index < len(data)-1: self.group_index += 1
 #            else:
-#                group_index = 0
-#                epoch += 1
-#            data_ = data[group_index]
+#                self.group_index = 0
+#                self.epoch += 1
+#            data_ = data[self.group_index]
 #            while len(data_) < span:
-#                if group_index < len(data)-1: group_index += 1
+#                if self.group_index < len(data)-1: self.group_index += 1
 #                else:
-#                    group_index = 0
-#                    epoch += 1
-#                data_ = data[group_index]
+#                    self.group_index = 0
+#                    self.epoch += 1
+#                data_ = data[self.group_index]
 #            buffer.extend(data_[0:span])
-#            data_index = span
+#            self.data_index = span
 #        else:
-#            buffer.append(data_[data_index])
-#            data_index += 1
+#            buffer.append(data_[self.data_index])
+#            self.data_index += 1
 #    # Backtrack a little bit to avoid skipping words in the end of a batch
-#    data_index = (data_index + len(data_) - span) % len(data_)
+#    self.data_index = (self.data_index + len(data_) - span) % len(data_)
 #    return batch, labels

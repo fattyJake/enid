@@ -192,7 +192,7 @@ class T_HAN(object):
             self.input_t = self.graph.get_tensor_by_name("input_t:0")
 
     def __del__(self):
-        self.sess.close()
+        if hasattr(self, "sess"): self.sess.close()
         tf.reset_default_graph()
 
     def train(self, t_train, x_train, y_train, dev_sample_percentage, num_epochs, batch_size, evaluate_every, model_path, debug=False):
@@ -237,8 +237,6 @@ class T_HAN(object):
         x_train, x_dev = x_train[:dev_sample_index], x_train[dev_sample_index:]
         y_train, y_dev = y_train[:dev_sample_index], y_train[dev_sample_index:]
         training_size = y_train.shape[0]
-
-        # configurate TensorFlow session, enable GPU accelerated if possible
 
         saver = tf.train.Saver()
 
@@ -378,11 +376,9 @@ class T_HAN(object):
         """
         based on the loss, use Adam to update parameter
         """
-        learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps,self.decay_rate, staircase=True)
-        self.optimizer = tf.train.AdamOptimizer(learning_rate)
-        self.add_global = self.step.assign_add(1)
-        with tf.control_dependencies([self.add_global]):
-            self.train_op = self.optimizer.minimize(self.loss)
+        learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay_rate)
+        self.lr_sum = tf.summary.scalar("learning_rate", learning_rate)
+        self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
 
     def _loss(self, l2_reg_lambda):
         with tf.name_scope("loss"):
