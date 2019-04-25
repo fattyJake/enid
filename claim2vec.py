@@ -187,7 +187,7 @@ class Claim2Vec(object):
         print('Initialized')
     
         average_loss = 0
-        while sg.epoch < num_epoch:
+        while sg.get_epoch() < num_epoch:
             batch_inputs, batch_labels = sg(data) #self._generate_batch(data)
             feed_dict = {self.train_inputs: batch_inputs,
                          self.train_labels: batch_labels}

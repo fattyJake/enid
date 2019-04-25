@@ -13,6 +13,15 @@ cdef class SkipGram:
         self.epoch = 0
         self.batch_size = batch_size
 
+    def get_data_index(self):
+        return self.data_index
+
+    def get_group_index(self):
+        return self.group_index
+
+    def get_epoch(self):
+        return self.epoch
+
     def __call__(self, list data):
         batch = np.ndarray(shape=(self.batch_size), dtype=DTYPE)
         labels = np.ndarray(shape=(self.batch_size, 1), dtype=DTYPE)
