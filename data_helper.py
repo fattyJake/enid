@@ -10,23 +10,21 @@ import os
 import random
 import pickle
 from datetime import datetime
-from dateutil.relativedelta import relativedelta
+# from dateutil.relativedelta import relativedelta
 import numpy as np
-import re
+# import re
 # import pyodbc
-import pandas as pd
+# import pandas as pd
 
 class Vectorizer(object):
     """
     Aim to vectorize claim data into event contaiers for further Deep Learning use.
     """
-    def __init__(self, mode='cd'):
+    def __init__(self):
         """
         Initialize a vectorizer to repeat use; load section variable spaces
         """
-        assert mode in ['cd', 'more2'], 'AttributeError: mode only acccept "cd" or "more2", got {}'.format(str(mode))
-        if mode == 'cd':    self.all_variables = list(pickle.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)),r'pickle_files','all_variables'),"rb")))
-        if mode == 'more2': self.all_variables = list(pickle.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)),r'pickle_files','all_variables_more2'),"rb")))
+        self.all_variables = list(pickle.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)),r'pickle_files','all_variables'),"rb")))
         self.variable_size = len(self.all_variables)
 
     def __call__(self, seq, max_sequence_length, encounter_limit=None):
@@ -56,7 +54,7 @@ class Vectorizer(object):
         --------
         >>> from enid.vectorizer import Vectorizer
         >>> vec = Vectorizer()
-        >>> vec.fit_transform(ehr, 200)[0]
+        >>> vec(ehr, 200)[0]
         array([84954, 85460, 85560, 85582, 85584, 85740, 85741, 85834, 85835,
                85880, 85884, 85926, 85950, 85951, 85962, 85968, 86132])
         
@@ -125,13 +123,11 @@ class HierarchicalVectorizer(object):
     """
     Aim to vectorize claim data into two-level event contaiers for further HAN use.
     """
-    def __init__(self, mode='more2'):
+    def __init__(self):
         """
         Initialize a vectorizer to repeat use; load section variable spaces
         """
-        assert mode in ['cd', 'more2'], 'AttributeError: mode only acccept "cd" or "more2", got {}'.format(str(mode))
-        if mode == 'cd':    self.all_variables = list(pickle.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)),r'pickle_files','all_variables'),"rb")))
-        if mode == 'more2': self.all_variables = list(pickle.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)),r'pickle_files','all_variables_more2'),"rb")))
+        self.all_variables = list(pickle.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)),r'pickle_files','all_variables'),"rb")))
         self.variable_size = len(self.all_variables)
 
     def __call__(self, seq, max_sequence_length, max_sentence_length):
@@ -161,7 +157,7 @@ class HierarchicalVectorizer(object):
         --------
         >>> from enid.vectorizer import Vectorizer
         >>> vec = Vectorizer()
-        >>> vec.fit_transform(ehr, 200)[0]
+        >>> vec(ehr, 200)[0]
         array([84954, 85460, 85560, 85582, 85584, 85740, 85741, 85834, 85835,
                85880, 85884, 85926, 85950, 85951, 85962, 85968, 86132])
         
@@ -188,13 +184,14 @@ class HierarchicalVectorizer(object):
                 [   41,    41,    41, ...,    41,    41,    41],
                 [   24,   151,   169, ...,  8579,  8579,  8579]]])
         """
-        seq = list(zip(seq['TIME'], seq['CODE']))
-        seq = [(self._DT_standardizer(i[0]), self.all_variables.index(i[1])) for i in seq if i[1] in self.all_variables]
-        grp_seq = {}
-        for t, c in seq:
-            d = grp_seq.setdefault(t, [])
-            d.append(c)
-        T, X = list(grp_seq.keys()), list(grp_seq.values())
+#        seq = list(zip(seq['TIME'], seq['CODE']))
+#        seq = [(self._DT_standardizer(i[0]), self.all_variables.index(i[1])) for i in seq if i[1] in self.all_variables]
+#        grp_seq = {}
+#        for t, c in seq:
+#            d = grp_seq.setdefault(t, [])
+#            d.append(c)
+        seq = {self._DT_standardizer(t): [self.all_variables.index(i) for i in c] for t, c in seq.items()}
+        T, X = list(seq.keys()), list(seq.values())
 
         T_delta = []
         for i, t in enumerate(T):

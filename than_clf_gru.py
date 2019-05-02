@@ -176,7 +176,6 @@ class T_HAN(object):
                     _, self.auc = tf.metrics.auc(self.input_y, self.probs, num_thresholds=3000, curve="ROC", name="auc")
                 
                 self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
-                self.learning_rate_sum = tf.summary.scalar("learning_rate", self.learning_rate)
                 self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
                 self.merged_sum = tf.summary.merge_all()
 
@@ -186,7 +185,7 @@ class T_HAN(object):
 
         if self.mode == 'deploy':
             self.model_path = kwargs['model_path']
-            self.step = kwargs['step']
+            self.step = kwargs.get('step', None)
             self.sess = tf.Session()
             self.sess.as_default()
 
@@ -203,6 +202,9 @@ class T_HAN(object):
             self.probs = self.graph.get_tensor_by_name("output/probs:0")
             self.input_x = self.graph.get_tensor_by_name("input_x:0")
             self.input_t = self.graph.get_tensor_by_name("input_t:0")
+            
+            self.max_sequence_length, self.max_sentence_length = self.input_x.get_shape()[1:]
+            self.max_sequence_length, self.max_sentence_length = int(self.max_sequence_length), int(self.max_sentence_length)
 
     def __del__(self):
         if hasattr(self, "sess"): self.sess.close()
@@ -243,6 +245,7 @@ class T_HAN(object):
         """
 
         # get number of input exemplars
+        assert self.mode == "train", print('ModeError: train module need to initialize T_HAN.mode as "train".')
         training_size = y_train.shape[0]
 
         dev_sample_index = -1 * int(dev_sample_percentage * float(training_size))
@@ -318,9 +321,10 @@ class T_HAN(object):
         y_probs: 1-D numpy array, shape (num_exemplar,)
                 predicted target values based on trained model
         """
+        assert self.mode == "deploy", print('ModeError: deploy module need to initialize T_HAN.mode as "deploy".')
         number_examples = t_test.shape[0]
         if number_examples < 128:
-            y_probs = self.sess.run(self.probs, {self.input_x: 'x_test', self.input_t: t_test})[:,0]
+            y_probs = self.sess.run(self.probs, {self.input_x: x_test, self.input_t: t_test})[:,0]
         else:
             y_probs = np.empty((0))
             for start, end in zip(range(0,number_examples,128), range(128,number_examples,128)):
@@ -356,7 +360,7 @@ class T_HAN(object):
         hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_token)
         attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
         attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)  # [batch_size*num_sentences,1]
-        p_attention = tf.nn.softmax(attention_logits - attention_logits_max)  # [batch_size*num_sentences,sentence_length]
+        p_attention = tf.nn.softmax(attention_logits - attention_logits_max, name='token_attention')  # [batch_size*num_sentences,sentence_length]
         p_attention_expanded = tf.expand_dims(p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
         sentence_representation = tf.multiply(p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, hidden_size*2]
         sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, hidden_size*2]
@@ -381,7 +385,7 @@ class T_HAN(object):
         hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_sentence)
         attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)
         attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)
-        p_attention = tf.nn.softmax(attention_logits - attention_logits_max)
+        p_attention = tf.nn.softmax(attention_logits - attention_logits_max, name='sentence_attention')
         p_attention_expanded = tf.expand_dims(p_attention, axis=2)
         instance_representation = tf.multiply(p_attention_expanded, hidden_state_sentence)
         instance_representation = tf.reduce_sum(instance_representation, axis=1)

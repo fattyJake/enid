@@ -420,3 +420,28 @@ class T_HAN(object):
         l2_losses = tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables() if 'bias' not in v.name]) * l2_reg_lambda
         loss = tf.identity(loss + l2_losses, name='loss')
         return loss
+
+    def _do_eval(self, eval_x, eval_t, eval_y, batch_size, writer_val):
+        """
+        Evaluate development in batch (if direcly force sess run entire development set, may raise OOM error)
+        """
+        number_examples = len(eval_x)
+        eval_loss, eval_counter = 0.0, 0
+        eval_probs = np.empty((0, self.num_classes))
+        for start, end in zip(range(0, number_examples, batch_size), range(batch_size, number_examples, batch_size)):
+            feed_dict = {self.input_x: eval_x[start:end],
+                         self.input_t: eval_t[start:end],
+                         self.input_y: eval_y[start:end]}
+            curr_eval_loss, curr_probs, merged_sum = self.sess.run([self.loss_val, self.probs, self.merged_sum],
+                                                                   feed_dict)
+            writer_val.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
+
+            eval_loss, eval_probs, eval_counter = eval_loss + curr_eval_loss, np.concatenate(
+                [eval_probs, curr_probs]), eval_counter + 1
+        feed_dict = {self.input_x: eval_x[end:],
+                     self.input_t: eval_t[end:],
+                     self.input_y: eval_y[end:]}
+        curr_probs = self.sess.run(self.probs, feed_dict)
+        eval_probs = np.concatenate([eval_probs, curr_probs])
+        eval_acc = self.sess.run(self.auc, {self.input_y: eval_y, self.probs: eval_probs})
+        return eval_loss / float(eval_counter), eval_acc

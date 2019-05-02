@@ -25,3 +25,4 @@ from . import than_clf
 from . import than_clf_cnn
 from . import than_clf_gru
 from . import visualizations
+from . import interpreter
