@@ -176,7 +176,8 @@ class T_HAN(object):
                     _, self.auc = tf.metrics.auc(self.input_y, self.probs, num_thresholds=3000, curve="ROC", name="auc")
                 
                 self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
-                self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
+                self.token_attention_sum = tf.summary.histogram("token_attentions", self.token_attention_logits)
+                self.sentence_attention_sum = tf.summary.histogram("sentence_attentions", self.sentence_attention_logits)
                 self.merged_sum = tf.summary.merge_all()
 
             config = tf.ConfigProto(log_device_placement=True)
@@ -354,15 +355,14 @@ class T_HAN(object):
             self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.hidden_size * 2],
                                                         initializer=tf.random_normal_initializer(stddev=0.1))
         
-        hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.hidden_size * 2])
-        hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
-        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sentence_length, self.hidden_size * 2])
-        hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_token)
-        attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
-        attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)  # [batch_size*num_sentences,1]
-        p_attention = tf.nn.softmax(attention_logits - attention_logits_max, name='token_attention')  # [batch_size*num_sentences,sentence_length]
-        p_attention_expanded = tf.expand_dims(p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
-        sentence_representation = tf.multiply(p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, hidden_size*2]
+        token_hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.hidden_size * 2])
+        token_hidden_representation = tf.nn.tanh(tf.matmul(token_hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
+        token_hidden_representation = tf.reshape(token_hidden_representation, shape=[-1, self.max_sentence_length, self.hidden_size * 2])
+        token_hidden_state_context_similiarity = tf.multiply(token_hidden_representation, self.context_vecotor_token)
+        self.token_attention_logits = tf.reduce_sum(token_hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
+        self.token_p_attention = tf.nn.softmax(self.token_attention_logits, name='token_attention')  # [batch_size*num_sentences,sentence_length]
+        token_p_attention_expanded = tf.expand_dims(self.token_p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
+        sentence_representation = tf.multiply(token_p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, hidden_size*2]
         sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, hidden_size*2]
         return sentence_representation
 
@@ -379,15 +379,14 @@ class T_HAN(object):
             self.context_vecotor_sentence = tf.get_variable("what_is_the_informative_sentence",
                                                             shape=[self.hidden_size], initializer=tf.random_normal_initializer(stddev=0.1))
         
-        hidden_state_2 = tf.reshape(hidden_state_sentence, shape=[-1, self.hidden_size])
-        hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_sentence) + self.W_b_attention_sentence)
-        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sequence_length, self.hidden_size])
-        hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_sentence)
-        attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)
-        attention_logits_max = tf.reduce_max(attention_logits, axis=1, keepdims=True)
-        p_attention = tf.nn.softmax(attention_logits - attention_logits_max, name='sentence_attention')
-        p_attention_expanded = tf.expand_dims(p_attention, axis=2)
-        instance_representation = tf.multiply(p_attention_expanded, hidden_state_sentence)
+        sentence_hidden_state_2 = tf.reshape(hidden_state_sentence, shape=[-1, self.hidden_size])
+        sentence_hidden_representation = tf.nn.tanh(tf.matmul(sentence_hidden_state_2, self.W_w_attention_sentence) + self.W_b_attention_sentence)
+        sentence_hidden_representation = tf.reshape(sentence_hidden_representation, shape=[-1, self.max_sequence_length, self.hidden_size])
+        sentence_hidden_state_context_similiarity = tf.multiply(sentence_hidden_representation, self.context_vecotor_sentence)
+        self.sentence_attention_logits = tf.reduce_sum(sentence_hidden_state_context_similiarity, axis=2)
+        self.sentence_p_attention = tf.nn.softmax(self.sentence_attention_logits, name='sentence_attention')
+        sentence_p_attention_expanded = tf.expand_dims(self.sentence_p_attention, axis=2)
+        instance_representation = tf.multiply(sentence_p_attention_expanded, hidden_state_sentence)
         instance_representation = tf.reduce_sum(instance_representation, axis=1)
         return instance_representation
 

@@ -9,7 +9,6 @@
 import os
 import math
 import collections
-import random
 import pickle
 
 import numpy as np
@@ -285,43 +284,43 @@ class Claim2Vec(object):
     #             data_ = data[self.group_index]
     #             self.data_index = 0
 
-#def generate_batch(self, data):
-#    assert self.batch_size % self.num_skips == 0
-#    assert self.num_skips <= 2 * self.skip_window
-#    batch = np.ndarray(shape=(self.batch_size), dtype=np.int32)
-#    labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
-#    span = 2 * self.skip_window + 1  # [ skip_window target skip_window ]
-#    buffer = collections.deque(maxlen=span)  # pylint: disable=redefined-builtin
-#    
-#    # locate group
-#    data_ = data[self.group_index]
-#    if self.data_index + span > len(data_):
-#        self.data_index = 0
-#    buffer.extend(data_[self.data_index:self.data_index + span])
-#    self.data_index += span
-#    for i in range(self.batch_size // self.num_skips):
-#        context_words = [w for w in range(span) if w != self.skip_window]
-#        words_to_use = random.sample(context_words, self.num_skips)
-#        for j, context_word in enumerate(words_to_use):
-#            batch[i * self.num_skips + j] = buffer[self.skip_window]
-#            labels[i * self.num_skips + j, 0] = buffer[context_word]
-#        if self.data_index == len(data_):
-#            if self.group_index < len(data)-1: self.group_index += 1
-#            else:
-#                self.group_index = 0
-#                self.epoch += 1
-#            data_ = data[self.group_index]
-#            while len(data_) < span:
-#                if self.group_index < len(data)-1: self.group_index += 1
-#                else:
-#                    self.group_index = 0
-#                    self.epoch += 1
-#                data_ = data[self.group_index]
-#            buffer.extend(data_[0:span])
-#            self.data_index = span
-#        else:
-#            buffer.append(data_[self.data_index])
-#            self.data_index += 1
-#    # Backtrack a little bit to avoid skipping words in the end of a batch
-#    self.data_index = (self.data_index + len(data_) - span) % len(data_)
-#    return batch, labels
+    #def generate_batch(self, data):
+    #    assert self.batch_size % self.num_skips == 0
+    #    assert self.num_skips <= 2 * self.skip_window
+    #    batch = np.ndarray(shape=(self.batch_size), dtype=np.int32)
+    #    labels = np.ndarray(shape=(self.batch_size, 1), dtype=np.int32)
+    #    span = 2 * self.skip_window + 1  # [ skip_window target skip_window ]
+    #    buffer = collections.deque(maxlen=span)  # pylint: disable=redefined-builtin
+    #    
+    #    # locate group
+    #    data_ = data[self.group_index]
+    #    if self.data_index + span > len(data_):
+    #        self.data_index = 0
+    #    buffer.extend(data_[self.data_index:self.data_index + span])
+    #    self.data_index += span
+    #    for i in range(self.batch_size // self.num_skips):
+    #        context_words = [w for w in range(span) if w != self.skip_window]
+    #        words_to_use = random.sample(context_words, self.num_skips)
+    #        for j, context_word in enumerate(words_to_use):
+    #            batch[i * self.num_skips + j] = buffer[self.skip_window]
+    #            labels[i * self.num_skips + j, 0] = buffer[context_word]
+    #        if self.data_index == len(data_):
+    #            if self.group_index < len(data)-1: self.group_index += 1
+    #            else:
+    #                self.group_index = 0
+    #                self.epoch += 1
+    #            data_ = data[self.group_index]
+    #            while len(data_) < span:
+    #                if self.group_index < len(data)-1: self.group_index += 1
+    #                else:
+    #                    self.group_index = 0
+    #                    self.epoch += 1
+    #                data_ = data[self.group_index]
+    #            buffer.extend(data_[0:span])
+    #            self.data_index = span
+    #        else:
+    #            buffer.append(data_[self.data_index])
+    #            self.data_index += 1
+    #    # Backtrack a little bit to avoid skipping words in the end of a batch
+    #    self.data_index = (self.data_index + len(data_) - span) % len(data_)
+    #    return batch, labels

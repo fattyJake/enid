@@ -122,7 +122,7 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
     def _map_elapse_time(self, t):
         c1 = constant_op.constant(1, dtype=dtypes.float32)
         c2 = constant_op.constant(2.7183, dtype=dtypes.float32)
-        T = math_ops.div(c1, gen_math_ops.log(t + c2), name='Log_elapse_time') # according to paper, used for large time delta like days
+        T = math_ops.div(c1, gen_math_ops.log(t/10 + c2), name='Log_elapse_time')
         Ones = array_ops.ones([1, self._num_units], dtype=dtypes.float32)
         T = math_ops.matmul(T, Ones)
         return T
@@ -197,11 +197,7 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
             T = self._map_elapse_time(t)
 
             # Decompose the previous cell if there is a elapse time
-            with vs.variable_scope("tlstm_weight"):
-                self.W_decomp = vs.get_variable('Decomposition_Hidden_weight', shape=[self._num_units, self._num_units])
-                self.b_decomp = vs.get_variable('Decomposition_Hidden_bias_enc', shape=[self._num_units])
-
-            C_ST = gen_math_ops.tanh(math_ops.matmul(c, self.W_decomp) + self.b_decomp)
+            C_ST = gen_math_ops.tanh(self._linear(c, [self._num_units, self._num_units], bias=True, scope="decomposition"))
             C_ST_dis = math_ops.multiply(T, C_ST)
             # if T is 0, then the weight is one
             c = c - C_ST + C_ST_dis

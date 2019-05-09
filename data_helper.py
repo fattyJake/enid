@@ -190,7 +190,7 @@ class HierarchicalVectorizer(object):
 #        for t, c in seq:
 #            d = grp_seq.setdefault(t, [])
 #            d.append(c)
-        seq = {self._DT_standardizer(t): [self.all_variables.index(i) for i in c] for t, c in seq.items()}
+        seq = {self._DT_standardizer(t): [self.all_variables.index(i) for i in c if i in self.all_variables] for t, c in seq.items()}
         T, X = list(seq.keys()), list(seq.values())
 
         T_delta = []
