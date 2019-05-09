@@ -68,16 +68,9 @@ def monitor_interpreter(data, model_path, step=None, most_recent=20, save_name=N
     variables = pickle.load(open(os.path.join(os.path.dirname(__file__),'pickle_files','codes'), 'rb'))
     data_to_show = {k: [f"{c}  {str(variables.get(c, ''))}" for c in v if re.search(r'^(ICD|GPI|CPT|HCPCS)', c)] for k, v in data_to_show.items()}
     dates = list(data_to_show.keys())
-#    with open(os.path.join(os.path.dirname(__file__),'pickle_files','demo.txt'), 'w') as f:
-#        for d, c in data_to_show.items():
-#            f.write(d.strftime("%Y-%m-%d")+'\n')
-#            for codes in c: f.write(codes + '\n')
-#            f.write('\n')
     names = ['<h3>'+'<br>'.join([c if len(c)<100 else c[:97]+'...' for c in v])+'</h3>' for v in data_to_show.values()]
     
     cmap = plt.get_cmap('GnBu')
-#    normalize = plt.Normalize(vmin=output.min(), vmax=output.max())
-#    colors = [cmap(normalize(value)) for value in output]
     sizes = [len(v)*75 for v in data_to_show.values()]
     
     mpld3.enable_notebook()
