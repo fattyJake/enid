@@ -217,6 +217,13 @@ class HierarchicalVectorizer(object):
 
     def _DT_standardizer(self, dt):
         if not dt: return None
+        if isinstance(dt, str):
+            for i, fmt in enumerate(('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%y', '%m/%d/%y %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%m-%d-%Y', '%m-%d-%Y %H:%M')):
+                try:
+                    dt = datetime.strptime(dt, fmt)
+                    break
+                except ValueError: pass
+            if isinstance(dt, str): raise ValueError('No valid datetime format found for '+dt)
         # use 1900-1-1 00:00:00 as base datetime; use time delta of base time to event time as rep
         std_dt = dt - datetime.strptime('01/01/1900', '%m/%d/%Y')
         # convert time delta from seconds to 12-hour bucket-size integer

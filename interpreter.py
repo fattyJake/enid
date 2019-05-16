@@ -100,7 +100,7 @@ def monitor_interpreter(data, model_path, step=None, most_recent=20, save_name=N
         
         tooltip = mpld3.plugins.PointHTMLTooltip(scatter, labels=names)
         mpld3.plugins.connect(fig, tooltip)
-        if save_name: mpld3.save_html(fig, save_name)
+        if save_name: fig.savefig(save_name,bbox_inches='tight')#mpld3.save_html(fig, save_name)
         else: mpld3.show(fig)
 
 def attention_interpreter(data, model_path, step=None, most_recent=20, save_name=None):

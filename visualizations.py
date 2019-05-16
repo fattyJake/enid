@@ -30,7 +30,7 @@ def plot_performance(out_true, out_pred, save_name=None):
 
     Examples
     --------
-    >>> from shakespeare.visualizations import plot_performance
+    >>> from enid.visualizations import plot_performance
     >>> y_true = [0, 1, 1, 0]
     >>> y_prob = [0.0000342, 0.99999974, 0.84367323, 0.5400342]
     >>> plot_performance(y_true, y_prob, None)

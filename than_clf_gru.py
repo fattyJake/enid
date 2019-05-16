@@ -217,9 +217,6 @@ class T_HAN(object):
         
         Parameters
         ----------
-        model: object of T_HAN
-            initialized Time-Aware HAN model
-
         t_train: 2-D numpy array, shape (num_exemplars, num_bucket)
             variable indices all buckets and sections
 
@@ -263,7 +260,7 @@ class T_HAN(object):
         self.sess.run(tf.global_variables_initializer())
         self.sess.run(tf.local_variables_initializer())
 
-        if debug: self.sess = tf_debug.LocalCLIDebugWrapperSession(self.sess)
+        if debug: self.sess = tf_debug.TensorBoardDebugWrapperSession(self.sess, 'localhost:6064')
         print('start time:', datetime.now())
         # create model root path if not exists
         if not os.path.exists(model_path): os.mkdir(model_path)
