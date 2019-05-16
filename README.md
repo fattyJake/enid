@@ -325,6 +325,11 @@ This tools is a patient medical history supervision system with visualizations t
   <img src="imgs/monitor.gif" class="center" />
 </p>
 
+
+<object data="imgs/monitor.html">
+    AA
+</object>
+
 ## For more information
 
 *   [Inovalon Website](https://www.inovalon.com/)
