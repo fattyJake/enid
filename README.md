@@ -59,7 +59,7 @@ enid.data_helper.HierarchicalVectorizer()
         "CPT-97530",
         "POS-11"
     ],
-    ……
+    ...
     "2016-10-11": [
         "REVENUE-0510",
         "ICD10DX-Z23",
@@ -262,7 +262,7 @@ enid.visualizations.plot_performance(out_true, out_pred, save_name=None)
 >>> plot_performance(y_true, y_prob, None)
 ```
 <p align="center">
-  <img src="imgs/performance.png" class="center" />
+  <img src="imgs/performance.png" class="center" height="200"/>
 </p>
 
 #### function plot_comparison
