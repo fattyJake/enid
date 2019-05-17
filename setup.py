@@ -1,5 +1,4 @@
 from __future__ import absolute_import
-import io
 import sys
 import os
 from setuptools import setup, find_packages
@@ -21,14 +20,15 @@ setup(name='enid',
           'sklearn>=0.20.0',
           'mpld3>=0.3'
       ],
+      author="Yage (Jacob) Wang, Matthew McClellan, William Kinsman",
+      author_email="ywang2@inovalon.com; mmcclellan@inovalon.com; wkinsman@inovalon.com",
       maintainer='Yage (Jacob) Wang',
-      maintainer_email='jacobwang123@gmail.com',
+      maintainer_email='ywang2@inovalon.com',
       zip_safe=False,
       packages=find_packages(),
       # this will use MANIFEST.in during install where we specify additional files,
       # this is the golden line
       include_package_data=True,
-      data_files=[('xgboost', LIB_PATH)],
       license='Apache-2.0',
       classifiers=['License :: OSI Approved :: Apache Software License',
                    'Development Status :: 5 - Production/Stable',
