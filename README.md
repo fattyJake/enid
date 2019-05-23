@@ -15,7 +15,7 @@ To download built wheel files:
 | Build Type      | Status | Artifacts |
 | ---             | ---    | ---       |
 | **Linux**   | [![Status](imgs/linux-build.svg)]() | [Py3 wheel](https://www.inovalon.com/) |
-| **Windows** | [![Status](imgs/win-build.svg)]() | [Py3 wheel](https://www.inovalon.com/) |
+| **Windows** | [![Status](imgs/win-build.svg)]()   | [Py3 wheel](https://www.inovalon.com/) |
 
 To install on Linux machine:
 
@@ -50,27 +50,25 @@ enid.data_helper.HierarchicalVectorizer()
 ```HierarchicalVectorizer``` aims to vectorize claim data into two-level event containers for further use. Specifically, output the time deltas of all encounters and index of each claim codes according to our fixed indexing dictionary. Once initialized, it contains \_\_call\_\_ function to take a dictionary (JSON) with patient's encounter date and codes as input, and return two numpy arrays:
 
 ##### Parameters
-```seq``` : JSON (dict) type object with format "YYYY-mm-dd": ["code_type-code"]. e.g.
-```json
-{
-    "2015-01-05": [
-        "CPT-97112",
-        "ICD9DX-7813",
-        "CPT-97530",
-        "POS-11"
-    ],
-    ...
-    "2016-10-11": [
-        "REVENUE-0510",
-        "ICD10DX-Z23",
-        "CPT-90460"
-    ]
-}
-```
-
-```max_sequence_length``` : int, the fixed padding number of encounters. If the number of encounters is larger than max\_sequence\_length, only use the latest max\_sequence\_length; if the number of encounters is smaller than max\_sequence\_length, fill the earlier sequence with null index.
-
-```max_token_length``` : int, the fixed padding number within each encounter. If the number of claim codes is larger than max\_token\_length, randomly sample max\_token\_length, number of codes; if the number of encounters is smaller than max\_token\_length, fill the later sequence with null index.
+* ```seq``` : JSON (dict) type object with format "YYYY-mm-dd": ["code_type-code"]. e.g.
+    ```json
+    {
+        "2015-01-05": [
+            "CPT-97112",
+            "ICD9DX-7813",
+            "CPT-97530",
+            "POS-11"
+        ],
+        ...
+        "2016-10-11": [
+            "REVENUE-0510",
+            "ICD10DX-Z23",
+            "CPT-90460"
+        ]
+    }
+    ```
+* ```max_sequence_length``` : int, the fixed padding number of encounters. If the number of encounters is larger than max\_sequence\_length, only use the latest max\_sequence\_length; if the number of encounters is smaller than max\_sequence\_length, fill the earlier sequence with null index.
+* ```max_token_length``` : int, the fixed padding number within each encounter. If the number of claim codes is larger than max\_token\_length, randomly sample max\_token\_length, number of codes; if the number of encounters is smaller than max\_token\_length, fill the later sequence with null index.
     
 ##### Return
 
