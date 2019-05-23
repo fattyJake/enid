@@ -333,4 +333,4 @@ This tools is a patient medical history supervision system with visualizations t
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[GPL License 3.0](LICENSE)
