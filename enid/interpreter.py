@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import mpld3
 from .data_helper import HierarchicalVectorizer
-from .than_clf_gru import T_HAN
+from .than_clf_rnn import T_HAN
 
 def monitor_interpreter(data, model_path, step=None, most_recent=20, save_name=None):
     """

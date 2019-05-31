@@ -22,7 +22,6 @@ from . import data_helper
 from . import tlstm
 from . import claim2vec
 from . import than_clf
-from . import than_clf_cnn
-from . import than_clf_gru
+from . import than_clf_rnn
 from . import visualizations
 from . import interpreter
