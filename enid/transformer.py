@@ -96,9 +96,9 @@ class MultiHeadAttention(object):
             output = tf.matmul(weights, V_heads)                                        # [batch,h,sequence_length,d_k]
             return output
 
-class PositionWiseFeedFoward(object): #TODO make it parallel
+class FeedFoward(object): #TODO make it parallel
     """
-    Position-wise Feed-Forward Networks
+    Feed-Forward Networks
     In addition to attention sub-layers, each of the layers in our encoder and decoder contains a fully
     connected feed-forward network, which is applied to each position separately and identically. This
     consists of two linear transformations with a ReLU activation in between.
@@ -135,17 +135,16 @@ class PositionWiseFeedFoward(object): #TODO make it parallel
             else:
                 return tf.nn.bias_add(x, b)
 
-    def position_wise_feed_forward_fn(self, scope="feedforward"):
+    def feed_forward_fn(self):
         """
         x:       [batch,sequence_length,d_model]
         :return: [batch,sequence_length,d_model]
         """
-        with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-            # Inner layer
-            outputs = self._linear(self.x, self.d_ff, True, scope="inner_layer")
+        # Inner layer
+        outputs = self._linear(self.x, self.d_ff, True, scope="inner_layer")
 
-            # Outer layer
-            outputs = self._linear(self.x, self.d_ff, False, scope="outer_layer")
+        # Outer layer
+        outputs = self._linear(self.x, self.d_ff, False, scope="outer_layer")
         
         return outputs #[batch,sequence_length,d_model]
 
@@ -154,12 +153,11 @@ class LayerNormResidualConnection(object):
     We employ a residual connection around each of the two sub-layers, followed by layer normalization.
     That is, the output of each sub-layer is LayerNorm(x+ Sublayer(x)), where Sublayer(x) is the function implemented by the sub-layer itself.
     """
-    def __init__(self, x, y, layer_index, type_, residual_dropout=0.1, use_residual_conn=True):
+    def __init__(self, x, y, layer_index, dropout_keep_prob=0.9, use_residual_conn=True):
         self.x = x
         self.y = y
         self.layer_index = layer_index
-        self.type_ = type_
-        self.residual_dropout = residual_dropout
+        self.dropout_keep_prob = dropout_keep_prob
         self.use_residual_conn = use_residual_conn
 
     #call residual connection and layer normalization
@@ -172,7 +170,7 @@ class LayerNormResidualConnection(object):
         return x_layer_norm
 
     def residual_connection(self):
-        output = self.x + tf.nn.dropout(self.y, 1.0 - self.residual_dropout)
+        output = self.x + tf.nn.dropout(self.y, self.dropout_keep_prob)
         return output
 
     # layer normalize the tensor x, averaging over the last dimension.
@@ -182,8 +180,7 @@ class LayerNormResidualConnection(object):
         :return:
         """
         filter_ = x.get_shape()[-1] # last dimension of x. e.g. 512
-        print("layer_normalization:==================>variable_scope:","layer_normalization"+str(self.layer_index)+self.type)
-        with tf.variable_scope(scope + str(self.layer_index) + self.type_):
+        with tf.variable_scope(scope + "_" + str(self.layer_index)):
             # 1. normalize input by using  mean and variance according to last dimension
             mean = tf.reduce_mean(x, axis=-1, keep_dims=True) #[batch_size,sequence_length,1]
             variance = tf.reduce_mean(tf.square(x - mean), axis=-1, keep_dims=True) #[batch_size,sequence_length,1]
@@ -191,15 +188,16 @@ class LayerNormResidualConnection(object):
 
             # 2. re-scale normalized input back
             scale = tf.get_variable("layer_norm_scale", [filter_], initializer=tf.ones_initializer) #[filter]
-            bias = tf.get_variable("layer_norm_bias", [filter_], initializer=tf.ones_initializer) #[filter]
+            bias  = tf.get_variable("layer_norm_bias",  [filter_], initializer=tf.ones_initializer) #[filter]
             output = norm_x * scale + bias #[batch_size,sequence_length,d_model]
             return output #[batch_size,sequence_length,d_model]
 
-class BaseClass(object):
+class Encoder(object):
     """
     base class has some common fields and functions.
     """
-    def __init__(self,d_model,d_k,d_v,sequence_length,h,batch_size,num_layer=6,type_='encoder',decoder_sent_length=None,initializer=tf.initializers.random_normal()):
+    def __init__(self, Q, K_s, d_model, d_ff, sequence_length, h, batch_size, num_layer=6, mask=None,
+                 dropout_keep_prob=None, use_residual_conn=True, initializer=tf.initializers.random_normal(stddev=0.1)):
         """
         :param d_model:
         :param d_k:
@@ -209,30 +207,49 @@ class BaseClass(object):
         :param batch_size:
         :param embedded_words: shape:[batch_size,sequence_length,embed_size]
         """
-        self.d_model=d_model
-        self.d_k=d_k
-        self.d_v=d_v
-        self.sequence_length=sequence_length
-        self.h=h
-        self.num_layer=num_layer
-        self.batch_size=batch_size
-        self.type=type
-        self.decoder_sent_length=decoder_sent_length
+        self.Q = Q
+        self.K_s = K_s
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.sequence_length = sequence_length
+        self.h = h
+        self.num_layer = num_layer
+        self.batch_size = batch_size
+        self.mask = mask
+        self.dropout_keep_prob = dropout_keep_prob
+        self.use_residual_conn = use_residual_conn
         self.initializer = initializer
 
-    def sub_layer_postion_wise_feed_forward(self ,x ,layer_index,type)  :# COMMON FUNCTION
-        """
-        :param x: shape should be:[batch_size,sequence_length,d_model]
-        :param layer_index: index of layer number
-        :param type: encoder,decoder or encoder_decoder_attention
-        :return: [batch_size,sequence_length,d_model]
-        """
-        with tf.variable_scope("sub_layer_postion_wise_feed_forward" + type + str(layer_index)):
-            postion_wise_feed_forward = PositionWiseFeedFoward(x, layer_index)
-            postion_wise_feed_forward_output = postion_wise_feed_forward.position_wise_feed_forward_fn()
-        return postion_wise_feed_forward_output
+    def encoder_multiple_layers(self):
+        for layer_index in range(self.num_layer):
+            self.Q, self.K_s = self.encoder_single_layer(self.Q, self.K_s, layer_index)
+        return self.Q, self.K_s
 
-    def sub_layer_multi_head_attention(self ,layer_index ,Q ,K_s,type,mask=None,dropout_keep_prob=None)  :# COMMON FUNCTION
+    def encoder_single_layer(self, Q, K_s, layer_index):
+        """
+        singel layer for encoder.each layers has two sub-layers:
+        the first is multi-head self-attention mechanism; the second is fully connected feed-forward network.
+        for each sublayer. use LayerNorm(x+Sublayer(x)). input and output of last dimension: d_model
+        :param Q: shape should be:       [batch_size*sequence_length,d_model]
+        :param K_s: shape should be:     [batch_size*sequence_length,d_model]
+        :return:output: shape should be:[batch_size*sequence_length,d_model]
+        """
+        #1.1 the first is multi-head self-attention mechanism
+        multi_head_attention_output = self.sub_layer_multi_head_attention(layer_index, Q, K_s, mask=self.mask, dropout_keep_prob=self.dropout_keep_prob) #[batch_size,sequence_length,d_model]
+        
+        #1.2 use LayerNorm(x+Sublayer(x)). all dimension=512.  [batch_size,sequence_length,d_model]
+        multi_head_attention_output = self.sub_layer_layer_norm_residual_connection(K_s, multi_head_attention_output, layer_index,
+                                                                                    dropout_keep_prob=self.dropout_keep_prob, use_residual_conn=self.use_residual_conn)
+
+        #2.1 the second is fully connected feed-forward network.
+        feed_forward_output = self.sub_layer_feed_forward(multi_head_attention_output, layer_index)
+
+        #2.2 use LayerNorm(x+Sublayer(x)). all dimension=512.
+        feed_forward_output = self.sub_layer_layer_norm_residual_connection(multi_head_attention_output, feed_forward_output,
+                                                                            layer_index, dropout_keep_prob=self.dropout_keep_prob)
+        return  feed_forward_output, feed_forward_output
+
+    def sub_layer_multi_head_attention(self, layer_index, Q, K_s, mask=None, dropout_keep_prob=None)  :# COMMON FUNCTION
         """
         multi head attention as sub layer
         :param layer_index: index of layer number
@@ -242,28 +259,38 @@ class BaseClass(object):
         :param mask: when use mask,illegal connection will be mask as huge big negative value.so it's possiblitity will become zero.
         :return: output of multi head attention.shape:[batch_size,sequence_length,d_model]
         """
-        with tf.variable_scope("base_mode_sub_layer_multi_head_attention_" + type+str(layer_index)):
+        with tf.variable_scope("encoder_sub_layer_multi_head_attention_" + str(layer_index)):
             # below is to handle attention for encoder and decoder with difference length:
-            #length=self.decoder_sent_length if (type!='encoder' and self.sequence_length!=self.decoder_sent_length) else self.sequence_length #TODO this may be useful
-            length=self.sequence_length
             #1. get V as learned parameters
-            V_s = tf.get_variable("V_s", shape=(self.batch_size,length,self.d_model),initializer=self.initializer)
+            V_s = tf.get_variable("V_s", shape=(self.batch_size, self.sequence_length, self.d_model), initializer=self.initializer)
+
             #2. call function of multi head attention to get result
-            multi_head_attention_class = MultiHeadAttention(Q, K_s, V_s, self.d_model, self.d_k, self.d_v, self.sequence_length,
-                                                            self.h,type=type,mask=mask,dropout_keep_prob=(1.0-dropout_keep_prob))
+            multi_head_attention_class = MultiHeadAttention(Q, K_s, V_s, self.d_model, self.sequence_length,
+                                                            self.h, mask=mask, dropout_keep_prob=dropout_keep_prob)
+
             sub_layer_multi_head_attention_output = multi_head_attention_class.multi_head_attention_fn()  # [batch_size*sequence_length,d_model]
         return sub_layer_multi_head_attention_output  # [batch_size,sequence_length,d_model]
 
-    def sub_layer_layer_norm_residual_connection(self,layer_input ,layer_output,layer_index,type,dropout_keep_prob=None,use_residual_conn=True): # COMMON FUNCTION
+    def sub_layer_feed_forward(self, x, layer_index)  :# COMMON FUNCTION
+        """
+        :param x: shape should be:[batch_size,sequence_length,d_model]
+        :param layer_index: index of layer number
+        :param type: encoder,decoder or encoder_decoder_attention
+        :return: [batch_size,sequence_length,d_model]
+        """
+        with tf.variable_scope("sub_layer_feed_forward_" + str(layer_index)):
+            feed_forward = FeedFoward(x, layer_index, self.d_model, self.d_ff)
+            feed_forward_output = feed_forward.feed_forward_fn()
+        return feed_forward_output
+
+    def sub_layer_layer_norm_residual_connection(self, layer_input, layer_output, layer_index, dropout_keep_prob=None, use_residual_conn=True): # COMMON FUNCTION
         """
         layer norm & residual connection
         :param input: [batch_size,equence_length,d_model]
         :param output:[batch_size,sequence_length,d_model]
         :return:
         """
-        print("@@@========================>layer_input:",layer_input,";layer_output:",layer_output)
-        #assert layer_input.get_shape().as_list()==layer_output.get_shape().as_list()
-        #layer_output_new= layer_input+ layer_output
-        layer_norm_residual_conn=LayerNormResidualConnection(layer_input,layer_output,layer_index,type,residual_dropout=(1-dropout_keep_prob),use_residual_conn=use_residual_conn)
+        layer_norm_residual_conn = LayerNormResidualConnection(layer_input, layer_output, layer_index, dropout_keep_prob=dropout_keep_prob,
+                                                               use_residual_conn=use_residual_conn)
         output = layer_norm_residual_conn.layer_norm_residual_connection()
         return output  # [batch_size,sequence_length,d_model]

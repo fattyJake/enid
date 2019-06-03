@@ -9,6 +9,7 @@
 import os
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
+from .transformer import Encoder
 from .tlstm import TLSTMCell
 from datetime import datetime
 import numpy as np
@@ -104,6 +105,10 @@ class T_HAN(object):
             self.pretrain_embedding = kwargs['pretrain_embedding']
             self.max_sequence_length = kwargs['max_sequence_length']
             self.max_sentence_length = kwargs['max_sentence_length']
+            self.d_model = kwargs['d_model']
+            self.d_ff = kwargs['d_ff']
+            self.h = kwargs['h']
+            self.encoder_layers = kwargs['encoder_layers']
             self.hidden_size = kwargs['hidden_size']
             self.dropout_keep_prob = kwargs['dropout_keep_prob']
             self.l2_reg_lambda = kwargs.get('l2_reg_lambda', 0.0)
@@ -127,21 +132,30 @@ class T_HAN(object):
                     self.emb_size = self.pretrain_embedding.shape[1]
                     embedding_matrix = tf.concat([self.pretrain_embedding, tf.zeros((1, self.emb_size))], axis=0)
                     self.Embedding = tf.Variable(embedding_matrix, trainable=True, dtype=tf.float32, name='embedding')
-                    self.W_projection = tf.get_variable("W_projection", shape=[self.hidden_size, self.num_classes], initializer=self.initializer)  # [embed_size,label_size]
-                    self.b_projection = tf.get_variable("b_projection", shape=[self.num_classes])
 
                 # 1. get emebedding of tokens
                 self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [batch_size, num_bucket, sentence_length, embedding_size]
                 self.batch_size = tf.shape(self.input)[0]
-                
-                # 2. token level attention
                 self.input = tf.reshape(self.input, shape=[-1, self.max_sentence_length, self.emb_size])
-                sentence_representation = self._attention_token_level(self.input) # shape:[batch_size*num_sentences,emb_size]
-                sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.emb_size]) # shape:[batch_size,num_sentences,emb_size]
+                self.input = tf.multiply(self.input, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32)))
+                input_mask = tf.get_variable("input_mask", [self.max_sentence_length, 1], initializer=self.initializer)
+                self.input = tf.add(self.input, input_mask) #[None,sentence_length,embed_size].
+
+                # 2. encoder
+                encoder_class = Encoder(self.input, self.input, self.d_model, self.d_ff, self.max_sentence_length, self.h, self.batch_size*self.max_sequence_length,
+                                        self.encoder_layers, dropout_keep_prob=self.dropout_keep_prob, use_residual_conn=True)
+                Q_encoded, _ = encoder_class.encoder_multiple_layers()
+
+                Q_encoded = tf.reshape(Q_encoded, shape=(self.batch_size*self.max_sequence_length, -1)) #[batch_size*sequence_length, sentence_length_length*d_model]
+                with tf.variable_scope("sentence_representation"):
+                    self.encoder_W_projection = tf.get_variable("encoder_W_projection", shape=[self.max_sentence_length*self.d_model, self.hidden_size], initializer=self.initializer)
+                    self.encoder_b_projection = tf.get_variable("encoder_b_projection", shape=[self.hidden_size])
+                    sentence_representation = tf.matmul(Q_encoded, self.encoder_W_projection) + self.encoder_b_projection #[batch_size*sequence_lenth,hidden_size]              
+                    sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.hidden_size]) # shape:[batch_size,sequence_lenth,hidden_size]
 
                 # make scan_time [batch_size x seq_length x 1]
                 scan_time = tf.reshape(self.input_t, [tf.shape(self.input_t)[0], tf.shape(self.input_t)[1], 1])
-                concat_input = tf.concat([tf.cast(scan_time, tf.float32), sentence_representation], 2) # [batch_size x seq_length x num_filters_total+1]
+                concat_input = tf.concat([tf.cast(scan_time, tf.float32), sentence_representation], 2) # [batch_size x seq_length x hidden_size+1]
 
                 self.tlstm_cell = TLSTMCell(self.hidden_size, True, dropout_keep_prob_in=self.dropout_keep_prob,
                                             dropout_keep_prob_h=self.dropout_keep_prob, dropout_keep_prob_out=self.dropout_keep_prob,
@@ -150,6 +164,8 @@ class T_HAN(object):
 
                 self.instance_representation = self._attention_sentence_level(self.hidden_state_sentence)
                 with tf.name_scope("output"):
+                    self.W_projection = tf.get_variable("W_projection", shape=[self.hidden_size, self.num_classes], initializer=self.initializer)  # [embed_size,label_size]
+                    self.b_projection = tf.get_variable("b_projection", shape=[self.num_classes])
                     self.logits = tf.matmul(self.instance_representation, self.W_projection) + self.b_projection  # [batch_size, self.num_classes]. main computation graph is here.
                     self.probs = tf.nn.softmax(self.logits, name="probs")
 
