@@ -35,6 +35,9 @@ class T_HAN(object):
     num_classes: int
         the number of y classes
 
+    batch_size: int
+        size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
+
     hidden_size: int
         number of T_LSTM units
 
@@ -105,14 +108,15 @@ class T_HAN(object):
             self.pretrain_embedding = kwargs['pretrain_embedding']
             self.max_sequence_length = kwargs['max_sequence_length']
             self.max_sentence_length = kwargs['max_sentence_length']
-            self.d_model = kwargs['d_model']
-            self.d_ff = kwargs['d_ff']
-            self.h = kwargs['h']
-            self.encoder_layers = kwargs['encoder_layers']
-            self.hidden_size = kwargs['hidden_size']
-            self.dropout_keep_prob = kwargs['dropout_keep_prob']
+            self.batch_size = kwargs.get('batch_size', 64)
+            self.d_model = kwargs.get('d_model', 256)
+            self.d_ff = kwargs.get('d_ff', 1024)
+            self.h = kwargs.get('h', 8)
+            self.encoder_layers = kwargs.get('encoder_layers', 6)
+            self.hidden_size = kwargs.get('hidden_size', 128)
+            self.dropout_keep_prob = kwargs.get('dropout_keep_prob', 0.8)
             self.l2_reg_lambda = kwargs.get('l2_reg_lambda', 0.0)
-            self.learning_rate = kwargs['learning_rate']
+            self.learning_rate = kwargs.get('learning_rate', 0.0001)
             self.initializer = kwargs.get('initializer', tf.orthogonal_initializer())
             self.objective = kwargs.get('objective', 'ce')
 
@@ -135,7 +139,6 @@ class T_HAN(object):
 
                 # 1. get emebedding of tokens
                 self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [batch_size, num_bucket, sentence_length, embedding_size]
-                self.batch_size = tf.shape(self.input)[0]
                 self.input = tf.reshape(self.input, shape=[-1, self.max_sentence_length, self.emb_size])
                 self.input = tf.multiply(self.input, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32)))
                 input_mask = tf.get_variable("input_mask", [self.max_sentence_length, 1], initializer=self.initializer)
@@ -211,7 +214,7 @@ class T_HAN(object):
         if hasattr(self, "sess"): self.sess.close()
         tf.reset_default_graph()
 
-    def train(self, t_train, x_train, y_train, dev_sample_percentage, num_epochs, batch_size, evaluate_every, model_path, debug=False):
+    def train(self, t_train, x_train, y_train, dev_sample_percentage, num_epochs, evaluate_every, model_path, debug=False):
         """
         Training module for T_HAN objectives
         
@@ -234,9 +237,6 @@ class T_HAN(object):
 
         num_epochs: int
             number of epochs of training, one epoch means finishing training entire training set
-
-        batch_size: int
-            size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
 
         evaluate_every: int
             number of steps to perform a evaluation on development (validation) set and print out info
@@ -276,7 +276,7 @@ class T_HAN(object):
             counter = 0
 
             # loop batch training
-            for start, end in zip(range(0, training_size, batch_size), range(batch_size, training_size, batch_size)):
+            for start, end in zip(range(0, training_size, self.batch_size), range(self.batch_size, training_size, self.batch_size)):
                 epoch_x = x_train[start:end]
                 epoch_t = t_train[start:end]
                 epoch_y = y_train[start:end]
@@ -292,7 +292,7 @@ class T_HAN(object):
                 # evaluation
                 if counter % evaluate_every == 0:
                     #train_accu, _ = model.auc.eval(feed_dict, session=sess)
-                    dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, batch_size, writer_val)
+                    dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, self.batch_size, writer_val)
                     print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
             self.sess.run(self.epoch_increment)
 
@@ -337,31 +337,6 @@ class T_HAN(object):
         return y_probs
 
     ###########################  PRIVATE FUNCTIONS  ###########################
-
-    def _attention_token_level(self, hidden_state):
-        """
-        @param hidden_state: [batch_size*num_sentences,sentence_length,embedding_size]
-        @return representation [batch_size*num_sentences,embedding_size]
-        """
-        with tf.name_scope("token_level_attention"):
-            self.W_w_attention_token = tf.get_variable("W_w_attention_token",
-                                                      shape=[self.emb_size, self.emb_size],
-                                                      initializer=self.initializer)
-            self.W_b_attention_token = tf.get_variable("W_b_attention_token", shape=[self.emb_size])
-            self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.emb_size],
-                                                        initializer=tf.random_normal_initializer(stddev=0.1))
-        
-        hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.emb_size])
-        hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
-        hidden_representation = tf.reshape(hidden_representation, shape=[-1, self.max_sentence_length, self.emb_size])
-        hidden_state_context_similiarity = tf.multiply(hidden_representation, self.context_vecotor_token)
-        attention_logits = tf.reduce_sum(hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
-        attention_logits_max = tf.reduce_max(attention_logits, axis=1, keep_dims=True)  # [batch_size*num_sentences,1]
-        p_attention = tf.nn.softmax(attention_logits - attention_logits_max)  # [batch_size*num_sentences,sentence_length]
-        p_attention_expanded = tf.expand_dims(p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
-        sentence_representation = tf.multiply(p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, emb_size]
-        sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, emb_size]
-        return sentence_representation
 
     def _attention_sentence_level(self, hidden_state_sentence):
         """
