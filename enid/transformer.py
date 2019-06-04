@@ -28,16 +28,21 @@ class MultiHeadAttention(object):
         self.dropout_keep_prob = dropout_keep_prob
 
     @staticmethod
-    def _linear(x, weight_shape, bias=True, scope=None):
+    def _linear(x, units, scope=None):
         """ linear projection (weight_shape: input size, output size) """
         with tf.variable_scope(scope or "linear"):
-            w = tf.get_variable("kernel", shape=weight_shape)
-            x = tf.matmul(x, w)
-            if bias:
-                b = tf.get_variable("bias", initializer=[0.0] * weight_shape[-1])
-                return tf.nn.bias_add(x, b)
-            else:
-                return x
+            layer = tf.keras.layers.Dense(units)
+            return layer.apply(x)
+        # with tf.variable_scope(scope or "linear"):
+        #     w = tf.get_variable("kernel", shape=weight_shape)
+        #     x_dim = x.get_shape().as_list()
+        #     x = tf.reshape(x, [-1, x_dim[-1]])
+        #     x = tf.matmul(x, w)
+        #
+        #     new_dim = tf.gather(tf.shape(x), list(range(len(x_dim)-1))) # Extract the first three dimensions
+        #     new_dim = tf.concat([new_dim, [weight_shape[-1]]], 0)
+        #     b = tf.get_variable("bias", initializer=[0.0] * weight_shape[-1])
+        #     return tf.reshape(tf.nn.bias_add(x, b), new_dim)
 
     def multi_head_attention_fn(self, scope="multi_head_attention"):
         """
@@ -49,10 +54,11 @@ class MultiHeadAttention(object):
         :return: result of scaled dot product attention. shape:[sequence_length,d_model]
         """
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+            print(self.Q, self.K_s, self.V_s)
             # 1. linearly project the queries,keys and values h times(with different,learned linear projections to d_k,d_k,d_v dimensions)
-            Q_projected   = self._linear(self.Q,   weight_shape=self.d_model, scope="Q")     # [batch,sequence_length,d_model]
-            K_s_projected = self._linear(self.K_s, weight_shape=self.d_model, scope="K")     # [batch,sequence_length,d_model]
-            V_s_projected = self._linear(self.V_s, weight_shape=self.d_model, scope="V")     # [batch,sequence_length,d_model]
+            Q_projected   = self._linear(self.Q,   self.d_model, scope="Q")     # [batch,sequence_length,d_model]
+            K_s_projected = self._linear(self.K_s, self.d_model, scope="K")     # [batch,sequence_length,d_model]
+            V_s_projected = self._linear(self.V_s, self.d_model, scope="V")     # [batch,sequence_length,d_model]
 
             # 2. scaled dot product attention for each projected version of Q,K,V
             dot_product = self.scaled_dot_product_attention_batch(Q_projected, K_s_projected, V_s_projected) # [batch,h,sequence_length,d_k]
@@ -61,7 +67,7 @@ class MultiHeadAttention(object):
             dot_product = tf.reshape(dot_product, shape=(-1, self.sequence_length, self.d_model))
 
             # 4. linear projection
-            output = self._linear(dot_product, weight_shape=self.d_model, scope="output")         # [batch,sequence_length,d_model]
+            output = self._linear(dot_product, self.d_model, scope="output")         # [batch,sequence_length,d_model]
             return output  #[batch,sequence_length,d_model]
 
     def scaled_dot_product_attention_batch(self, Q, K_s, V_s, scope="scaled_dot_product_attention"):
@@ -124,16 +130,25 @@ class FeedFoward(object): #TODO make it parallel
         self.initializer = tf.random_normal_initializer(stddev=0.1)
 
     @staticmethod
-    def _linear(x, weight_shape, activation, scope=None):
+    def _linear(x, units, activation, scope=None):
         """ linear projection (weight_shape: input size, output size) """
         with tf.variable_scope(scope or "linear"):
-            w = tf.get_variable("kernel", shape=weight_shape)
-            x = tf.matmul(x, w)
-            b = tf.get_variable("bias", initializer=[0.0] * weight_shape[-1])
-            if activation:
-                return tf.nn.relu(tf.nn.bias_add(x, b))
-            else:
-                return tf.nn.bias_add(x, b)
+            if activation: layer = tf.keras.layers.Dense(units, activation=tf.nn.relu)
+            else: layer = tf.keras.layers.Dense(units)
+            return layer.apply(x)
+        # with tf.variable_scope(scope or "linear"):
+        #     w = tf.get_variable("kernel", shape=weight_shape)
+        #     x_dim = x.get_shape().as_list()
+        #     x = tf.reshape(x, [-1, x_dim[-1]])
+        #     x = tf.matmul(x, w)
+        #
+        #     new_dim = tf.gather(tf.shape(x), list(range(len(x_dim)-1))) # Extract the first three dimensions
+        #     new_dim = tf.concat([new_dim, [weight_shape[-1]]], 0)
+        #     b = tf.get_variable("bias", initializer=[0.0] * weight_shape[-1])
+        #     if activation:
+        #         return tf.reshape(tf.nn.relu(tf.nn.bias_add(x, b)), new_dim)
+        #     else:
+        #         return tf.reshape(tf.nn.bias_add(x, b), new_dim)
 
     def feed_forward_fn(self):
         """
@@ -144,7 +159,7 @@ class FeedFoward(object): #TODO make it parallel
         outputs = self._linear(self.x, self.d_ff, True, scope="inner_layer")
 
         # Outer layer
-        outputs = self._linear(self.x, self.d_ff, False, scope="outer_layer")
+        outputs = self._linear(outputs, self.d_model, False, scope="outer_layer")
         
         return outputs #[batch,sequence_length,d_model]
 
@@ -238,14 +253,14 @@ class Encoder(object):
         multi_head_attention_output = self.sub_layer_multi_head_attention(layer_index, Q, K_s, mask=self.mask, dropout_keep_prob=self.dropout_keep_prob) #[batch_size,sequence_length,d_model]
         
         #1.2 use LayerNorm(x+Sublayer(x)). all dimension=512.  [batch_size,sequence_length,d_model]
-        multi_head_attention_output = self.sub_layer_layer_norm_residual_connection(K_s, multi_head_attention_output, layer_index,
+        multi_head_attention_output = self.sub_layer_layer_norm_residual_connection(K_s, multi_head_attention_output, layer_index, "mhatt_resid",
                                                                                     dropout_keep_prob=self.dropout_keep_prob, use_residual_conn=self.use_residual_conn)
 
         #2.1 the second is fully connected feed-forward network.
         feed_forward_output = self.sub_layer_feed_forward(multi_head_attention_output, layer_index)
 
         #2.2 use LayerNorm(x+Sublayer(x)). all dimension=512.
-        feed_forward_output = self.sub_layer_layer_norm_residual_connection(multi_head_attention_output, feed_forward_output,
+        feed_forward_output = self.sub_layer_layer_norm_residual_connection(multi_head_attention_output, feed_forward_output, "ff_resid",
                                                                             layer_index, dropout_keep_prob=self.dropout_keep_prob)
         return  feed_forward_output, feed_forward_output
 
@@ -278,19 +293,20 @@ class Encoder(object):
         :param type: encoder,decoder or encoder_decoder_attention
         :return: [batch_size,sequence_length,d_model]
         """
-        with tf.variable_scope("sub_layer_feed_forward_" + str(layer_index)):
+        with tf.variable_scope("encoder_sub_layer_feed_forward_" + str(layer_index)):
             feed_forward = FeedFoward(x, layer_index, self.d_model, self.d_ff)
             feed_forward_output = feed_forward.feed_forward_fn()
         return feed_forward_output
 
-    def sub_layer_layer_norm_residual_connection(self, layer_input, layer_output, layer_index, dropout_keep_prob=None, use_residual_conn=True): # COMMON FUNCTION
+    def sub_layer_layer_norm_residual_connection(self, layer_input, layer_output, layer_index, scope, dropout_keep_prob=None, use_residual_conn=True): # COMMON FUNCTION
         """
         layer norm & residual connection
         :param input: [batch_size,equence_length,d_model]
         :param output:[batch_size,sequence_length,d_model]
         :return:
         """
-        layer_norm_residual_conn = LayerNormResidualConnection(layer_input, layer_output, layer_index, dropout_keep_prob=dropout_keep_prob,
-                                                               use_residual_conn=use_residual_conn)
-        output = layer_norm_residual_conn.layer_norm_residual_connection()
-        return output  # [batch_size,sequence_length,d_model]
+        with tf.variable_scope("encoder_sub_layer_norm_residual_" + str(layer_index) + '_' + str(scope)):
+            layer_norm_residual_conn = LayerNormResidualConnection(layer_input, layer_output, layer_index, dropout_keep_prob=dropout_keep_prob,
+                                                                   use_residual_conn=use_residual_conn)
+            output = layer_norm_residual_conn.layer_norm_residual_connection()
+            return output  # [batch_size,sequence_length,d_model]

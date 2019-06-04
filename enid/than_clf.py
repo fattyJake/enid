@@ -139,7 +139,7 @@ class T_HAN(object):
 
                 # 1. get emebedding of tokens
                 self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [batch_size, num_bucket, sentence_length, embedding_size]
-                self.input = tf.reshape(self.input, shape=[-1, self.max_sentence_length, self.emb_size])
+                self.input = tf.reshape(self.input, shape=[self.batch_size*self.max_sequence_length, self.max_sentence_length, self.emb_size])
                 self.input = tf.multiply(self.input, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32)))
                 input_mask = tf.get_variable("input_mask", [self.max_sentence_length, 1], initializer=self.initializer)
                 self.input = tf.add(self.input, input_mask) #[None,sentence_length,embed_size].
