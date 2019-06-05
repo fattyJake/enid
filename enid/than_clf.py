@@ -128,9 +128,9 @@ class T_HAN(object):
                 self.decay_steps, self.decay_rate = kwargs['decay_steps'], kwargs['decay_rate']
 
                 # add placeholder
-                self.input_x = tf.placeholder(tf.int32, [None, self.max_sequence_length, self.max_sentence_length], name="input_x") # X [instance_size, num_bucket, sentence_length]
-                self.input_t = tf.placeholder(tf.int32, [None, self.max_sequence_length],                           name="input_t") # T [instance_size, num_bucket]
-                self.input_y = tf.placeholder(tf.int32, [None, self.num_classes],                                   name="input_y") # y [instance_size, num_classes]
+                self.input_x = tf.placeholder(tf.int32, [self.batch_size, self.max_sequence_length, self.max_sentence_length], name="input_x") # X [instance_size, num_bucket, sentence_length]
+                self.input_t = tf.placeholder(tf.int32, [self.batch_size, self.max_sequence_length],                           name="input_t") # T [instance_size, num_bucket]
+                self.input_y = tf.placeholder(tf.int32, [self.batch_size, self.num_classes],                                   name="input_y") # y [instance_size, num_classes]
                 
                 with tf.name_scope("embedding"):
                     self.emb_size = self.pretrain_embedding.shape[1]
@@ -142,7 +142,7 @@ class T_HAN(object):
                 self.input = tf.reshape(self.input, shape=[self.batch_size*self.max_sequence_length, self.max_sentence_length, self.emb_size])
                 self.input = tf.multiply(self.input, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32)))
                 input_mask = tf.get_variable("input_mask", [self.max_sentence_length, 1], initializer=self.initializer)
-                self.input = tf.add(self.input, input_mask) #[None,sentence_length,embed_size].
+                self.input = tf.add(self.input, input_mask) #[batch_size,sentence_length,embed_size].
 
                 # 2. encoder
                 encoder_class = Encoder(self.input, self.input, self.d_model, self.d_ff, self.max_sentence_length, self.h, self.batch_size*self.max_sequence_length,
@@ -176,11 +176,13 @@ class T_HAN(object):
                 if self.objective == 'ce':  self.loss_val = self._loss(self.l2_reg_lambda)
                 if self.objective == 'auc': self.loss_val = self._loss_roc_auc(self.l2_reg_lambda)
                 self._train()
-                self.predictions = tf.argmax(self.logits, axis=1, name="predictions")  # shape:[None,]
+                self.predictions = tf.argmax(self.logits, axis=1, name="predictions")  # shape:[batch_size,]
 
                 # performance
                 with tf.name_scope("performance"):
-                    _, self.auc = tf.metrics.auc(self.input_y, self.probs, num_thresholds=3000, curve="ROC", name="auc")
+                    self.test_y = tf.placeholder(tf.int32, [None, self.num_classes])
+                    self.test_p = tf.placeholder(tf.int32, [None, self.num_classes])
+                    _, self.auc = tf.metrics.auc(self.test_y, self.test_p, num_thresholds=3000, curve="ROC", name="auc")
                 
                 self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
                 self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
@@ -209,6 +211,7 @@ class T_HAN(object):
             self.probs = self.graph.get_tensor_by_name("output/probs:0")
             self.input_x = self.graph.get_tensor_by_name("input_x:0")
             self.input_t = self.graph.get_tensor_by_name("input_t:0")
+            self.batch_size = self.input_x.get_shape().as_list()[0]
 
     def __del__(self):
         if hasattr(self, "sess"): self.sess.close()
@@ -231,7 +234,7 @@ class T_HAN(object):
 
         y_train: 2-D numpy array, shape (num_exemplars, num_classes)
             whole training ground truth
-            
+
         dev_sample_percentage: float
             percentage of x_train seperated from training process and used for validation
 
@@ -292,7 +295,7 @@ class T_HAN(object):
                 # evaluation
                 if counter % evaluate_every == 0:
                     #train_accu, _ = model.auc.eval(feed_dict, session=sess)
-                    dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, self.batch_size, writer_val)
+                    dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, writer_val)
                     print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
             self.sess.run(self.epoch_increment)
 
@@ -320,21 +323,20 @@ class T_HAN(object):
                 predicted target values based on trained model
         """
         number_examples = t_test.shape[0]
-        if number_examples < 128:
-            y_probs = self.sess.run(self.probs, {self.input_x: 'x_test', self.input_t: t_test})[:,0]
-        else:
-            y_probs = np.empty((0))
-            for start, end in zip(range(0,number_examples,128), range(128,number_examples,128)):
-                feed_dict = {self.input_x: x_test[start:end],
-                             self.input_t: t_test[start:end]}
-                probs = self.sess.run(self.probs, feed_dict)[:,0]
-                y_probs = np.concatenate([y_probs, probs])
-            feed_dict = {self.input_x: x_test[end:],
-                         self.input_t: t_test[end:]}
-            probs = self.sess.run(self.probs, feed_dict)[:,0]
+        fake_samples = number_examples % self.batch_size
+        if fake_samples > 0:
+            t_test = np.concatenate([t_test, t_test[-fake_samples:]], axis=0)
+            x_test = np.concatenate([x_test, x_test[-fake_samples:]], axis=0)
+
+        y_probs = np.empty((0))
+        for start, end in zip(range(0, number_examples+fake_samples, self.batch_size), range(self.batch_size, number_examples+fake_samples, self.batch_size)):
+            feed_dict = {self.input_x: x_test[start:end],
+                         self.input_t: t_test[start:end]}
+            probs = self.sess.run(self.probs, feed_dict)[:, 0]
             y_probs = np.concatenate([y_probs, probs])
-        # cali = pickle.load(open(os.path.join(os.path.dirname(__file__), 'pickle_files','er_calibration'), 'rb'))
-        return y_probs
+
+        if fake_samples > 0: return y_probs[:number_examples]
+        else: return y_probs
 
     ###########################  PRIVATE FUNCTIONS  ###########################
 
@@ -408,14 +410,16 @@ class T_HAN(object):
         loss = tf.identity(loss + l2_losses, name='loss')
         return loss
 
-    def _do_eval(self, eval_x, eval_t, eval_y, batch_size, writer_val):
+    def _do_eval(self, eval_x, eval_t, eval_y, writer_val):
         """
         Evaluate development in batch (if direcly force sess run entire development set, may raise OOM error)
         """
         number_examples = len(eval_x)
+        fake_samples = number_examples % self.batch_size
+
         eval_loss, eval_counter = 0.0, 0
         eval_probs = np.empty((0, self.num_classes))
-        for start, end in zip(range(0,number_examples,batch_size), range(batch_size,number_examples,batch_size)):
+        for start, end in zip(range(0,number_examples-fake_samples,self.batch_size), range(self.batch_size,number_examples-fake_samples,self.batch_size)):
             feed_dict = {self.input_x: eval_x[start:end],
                          self.input_t: eval_t[start:end],
                          self.input_y: eval_y[start:end]}
@@ -423,10 +427,6 @@ class T_HAN(object):
             writer_val.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
             
             eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
-        feed_dict = {self.input_x: eval_x[end:],
-                     self.input_t: eval_t[end:],
-                     self.input_y: eval_y[end:]}
-        curr_probs = self.sess.run(self.probs, feed_dict)
-        eval_probs = np.concatenate([eval_probs, curr_probs])
-        eval_acc   = self.sess.run(self.auc, {self.input_y: eval_y, self.probs: eval_probs})
+
+        eval_acc = self.sess.run(self.auc, {self.test_y: eval_y[:number_examples-fake_samples], self.test_p: eval_probs})
         return eval_loss/float(eval_counter), eval_acc
