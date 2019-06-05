@@ -414,19 +414,20 @@ class T_HAN(object):
         """
         Evaluate development in batch (if direcly force sess run entire development set, may raise OOM error)
         """
-        number_examples = len(eval_x)
+        number_examples = eval_x.shape[0]
         fake_samples = number_examples % self.batch_size
+        eval_x, eval_t, eval_y = eval_x[:number_examples-fake_samples], eval_t[:number_examples-fake_samples], eval_y[:number_examples-fake_samples]
+        number_examples = number_examples - fake_samples
 
         eval_loss, eval_counter = 0.0, 0
         eval_probs = np.empty((0, self.num_classes))
-        for start, end in zip(range(0,number_examples-fake_samples,self.batch_size), range(self.batch_size,number_examples-fake_samples,self.batch_size)):
+        for start, end in zip(range(0,number_examples+1,self.batch_size), range(self.batch_size,number_examples+1,self.batch_size)):
             feed_dict = {self.input_x: eval_x[start:end],
                          self.input_t: eval_t[start:end],
                          self.input_y: eval_y[start:end]}
             curr_eval_loss, curr_probs, merged_sum = self.sess.run([self.loss_val, self.probs, self.merged_sum], feed_dict)
             writer_val.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
-            
             eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
 
-        eval_acc = self.sess.run(self.auc, {self.test_y: eval_y[:number_examples-fake_samples], self.test_p: eval_probs})
+        eval_acc = self.sess.run(self.auc, {self.test_y: eval_y, self.test_p: eval_probs})
         return eval_loss/float(eval_counter), eval_acc
