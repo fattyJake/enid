@@ -33,16 +33,6 @@ class MultiHeadAttention(object):
         with tf.variable_scope(scope or "linear"):
             layer = tf.keras.layers.Dense(units)
             return layer.apply(x)
-        # with tf.variable_scope(scope or "linear"):
-        #     w = tf.get_variable("kernel", shape=weight_shape)
-        #     x_dim = x.get_shape().as_list()
-        #     x = tf.reshape(x, [-1, x_dim[-1]])
-        #     x = tf.matmul(x, w)
-        #
-        #     new_dim = tf.gather(tf.shape(x), list(range(len(x_dim)-1))) # Extract the first three dimensions
-        #     new_dim = tf.concat([new_dim, [weight_shape[-1]]], 0)
-        #     b = tf.get_variable("bias", initializer=[0.0] * weight_shape[-1])
-        #     return tf.reshape(tf.nn.bias_add(x, b), new_dim)
 
     def multi_head_attention_fn(self, scope="multi_head_attention"):
         """
@@ -136,19 +126,6 @@ class FeedFoward(object): #TODO make it parallel
             if activation: layer = tf.keras.layers.Dense(units, activation=tf.nn.relu)
             else: layer = tf.keras.layers.Dense(units)
             return layer.apply(x)
-        # with tf.variable_scope(scope or "linear"):
-        #     w = tf.get_variable("kernel", shape=weight_shape)
-        #     x_dim = x.get_shape().as_list()
-        #     x = tf.reshape(x, [-1, x_dim[-1]])
-        #     x = tf.matmul(x, w)
-        #
-        #     new_dim = tf.gather(tf.shape(x), list(range(len(x_dim)-1))) # Extract the first three dimensions
-        #     new_dim = tf.concat([new_dim, [weight_shape[-1]]], 0)
-        #     b = tf.get_variable("bias", initializer=[0.0] * weight_shape[-1])
-        #     if activation:
-        #         return tf.reshape(tf.nn.relu(tf.nn.bias_add(x, b)), new_dim)
-        #     else:
-        #         return tf.reshape(tf.nn.bias_add(x, b), new_dim)
 
     def feed_forward_fn(self):
         """
