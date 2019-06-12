@@ -13,6 +13,7 @@ from .transformer import Encoder
 from .tlstm import TLSTMCell
 from datetime import datetime
 import numpy as np
+from sklearn.metrics import roc_auc_score
 
 class T_HAN(object):
     """
@@ -135,14 +136,14 @@ class T_HAN(object):
                 with tf.name_scope("embedding"):
                     self.emb_size = self.pretrain_embedding.shape[1]
                     embedding_matrix = tf.concat([self.pretrain_embedding, tf.zeros((1, self.emb_size))], axis=0)
-                    self.Embedding = tf.Variable(embedding_matrix, trainable=True, dtype=tf.float32, name='embedding')
+                    self.Embedding = tf.Variable(embedding_matrix, trainable=False, dtype=tf.float32, name='embedding')
 
                 # 1. get emebedding of tokens
                 self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [batch_size, num_bucket, sentence_length, embedding_size]
                 self.input = tf.reshape(self.input, shape=[self.batch_size*self.max_sequence_length, self.max_sentence_length, self.emb_size])
                 self.input = tf.multiply(self.input, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32)))
-                input_mask = tf.get_variable("input_mask", [self.max_sentence_length, 1], initializer=self.initializer)
-                self.input = tf.add(self.input, input_mask) #[batch_size,sentence_length,embed_size].
+                # input_mask = tf.get_variable("input_mask", [self.max_sentence_length, 1], initializer=self.initializer)
+                # self.input = tf.add(self.input, input_mask) #[batch_size,sentence_length,embed_size].
 
                 # 2. encoder
                 encoder_class = Encoder(self.input, self.input, self.d_model, self.d_ff, self.max_sentence_length, self.h, self.batch_size*self.max_sequence_length,
@@ -178,12 +179,12 @@ class T_HAN(object):
                 self._train()
                 self.predictions = tf.argmax(self.logits, axis=1, name="predictions")  # shape:[batch_size,]
 
-                # performance
-                with tf.name_scope("performance"):
-                    self.test_y = tf.placeholder(tf.int32, [None, self.num_classes])
-                    self.test_p = tf.placeholder(tf.int32, [None, self.num_classes])
-                    _, self.auc = tf.metrics.auc(self.test_y, self.test_p, num_thresholds=3000, curve="ROC", name="auc")
-                
+                # # performance
+                # with tf.name_scope("performance"):
+                #     self.test_y = tf.placeholder(tf.int32, [None, self.num_classes])
+                #     self.test_p = tf.placeholder(tf.int32, [None, self.num_classes])
+                #     _, self.auc = tf.metrics.auc(self.test_y, self.test_p, num_thresholds=3000, curve="ROC", name="auc")
+
                 self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
                 self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
                 self.merged_sum = tf.summary.merge_all()
@@ -296,7 +297,7 @@ class T_HAN(object):
                 if counter % evaluate_every == 0:
                     #train_accu, _ = model.auc.eval(feed_dict, session=sess)
                     dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, writer_val)
-                    print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
+                    print(f'Step: {counter: <5}  |  Loss: {curr_loss:11.7f}  |  Development Loss: {dev_loss:11.7f}  |  Development AUROC: {dev_accu: 9.7f}')
             self.sess.run(self.epoch_increment)
 
             # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
@@ -429,5 +430,5 @@ class T_HAN(object):
             writer_val.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
             eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
 
-        eval_acc = self.sess.run(self.auc, {self.test_y: eval_y, self.test_p: eval_probs})
+        eval_acc = roc_auc_score(eval_y, eval_probs) #self.sess.run(self.auc, {self.test_y: eval_y, self.test_p: eval_probs})
         return eval_loss/float(eval_counter), eval_acc
