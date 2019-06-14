@@ -148,14 +148,16 @@ class T_HAN(object):
                 # 2. encoder
                 encoder_class = Encoder(self.input, self.input, self.d_model, self.d_ff, self.max_sentence_length, self.h, self.batch_size*self.max_sequence_length,
                                         self.encoder_layers, dropout_keep_prob=self.dropout_keep_prob, use_residual_conn=True)
-                Q_encoded, _ = encoder_class.encoder_multiple_layers()
+                Q_encoded, _ = encoder_class.encoder_multiple_layers() #[batch_size*sequence_length, sentence_length_length, d_model]
 
-                Q_encoded = tf.reshape(Q_encoded, shape=(self.batch_size*self.max_sequence_length, -1)) #[batch_size*sequence_length, sentence_length_length*d_model]
-                with tf.variable_scope("sentence_representation"):
-                    self.encoder_W_projection = tf.get_variable("encoder_W_projection", shape=[self.max_sentence_length*self.d_model, self.hidden_size], initializer=self.initializer)
-                    self.encoder_b_projection = tf.get_variable("encoder_b_projection", shape=[self.hidden_size])
-                    sentence_representation = tf.matmul(Q_encoded, self.encoder_W_projection) + self.encoder_b_projection #[batch_size*sequence_lenth,hidden_size]              
-                    sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.hidden_size]) # shape:[batch_size,sequence_lenth,hidden_size]
+                sentence_representation = self._attention_token_level(Q_encoded) # [batch_size*num_sentences, d_model]
+                sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.d_model]) # shape:[batch_size,sequence_lenth,d_model]
+                # Q_encoded = tf.reshape(Q_encoded, shape=(self.batch_size*self.max_sequence_length, -1)) #[batch_size*sequence_length, sentence_length_length, d_model]
+                # with tf.variable_scope("sentence_representation"):
+                #     self.encoder_W_projection = tf.get_variable("encoder_W_projection", shape=[self.max_sentence_length*self.d_model, self.hidden_size], initializer=self.initializer)
+                #     self.encoder_b_projection = tf.get_variable("encoder_b_projection", shape=[self.hidden_size])
+                #     sentence_representation = tf.matmul(Q_encoded, self.encoder_W_projection) + self.encoder_b_projection #[batch_size*sequence_lenth,hidden_size]              
+                #     sentence_representation = tf.reshape(sentence_representation, shape=[-1, self.max_sequence_length, self.hidden_size]) # shape:[batch_size,sequence_lenth,hidden_size]
 
                 # make scan_time [batch_size x seq_length x 1]
                 scan_time = tf.reshape(self.input_t, [tf.shape(self.input_t)[0], tf.shape(self.input_t)[1], 1])
@@ -340,6 +342,30 @@ class T_HAN(object):
         else: return y_probs
 
     ###########################  PRIVATE FUNCTIONS  ###########################
+
+    def _attention_token_level(self, hidden_state):
+        """
+        @param hidden_state: [batch_size*num_sentences,sentence_length,d_model]
+        @return representation [batch_size*num_sentences,d_model]
+        """
+        with tf.name_scope("token_level_attention"):
+            self.W_w_attention_token = tf.get_variable("W_w_attention_token",
+                                                      shape=[self.d_model, self.d_model],
+                                                      initializer=self.initializer)
+            self.W_b_attention_token = tf.get_variable("W_b_attention_token", shape=[self.d_model])
+            self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.d_model],
+                                                        initializer=tf.random_normal_initializer(stddev=0.1))
+        
+        token_hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.d_model])
+        token_hidden_representation = tf.nn.tanh(tf.matmul(token_hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
+        token_hidden_representation = tf.reshape(token_hidden_representation, shape=[-1, self.max_sentence_length, self.d_model])
+        token_hidden_state_context_similiarity = tf.multiply(token_hidden_representation, self.context_vecotor_token)
+        self.token_attention_logits = tf.reduce_sum(token_hidden_state_context_similiarity, axis=2)  # [batch_size*num_sentences,sentence_length]
+        self.token_p_attention = tf.nn.softmax(self.token_attention_logits, name='token_attention')  # [batch_size*num_sentences,sentence_length]
+        token_p_attention_expanded = tf.expand_dims(self.token_p_attention, axis=2)  # [batch_size*num_sentences,sentence_length,1]
+        sentence_representation = tf.multiply(token_p_attention_expanded, hidden_state)  # [batch_size*num_sentences,sentence_length, d_model]
+        sentence_representation = tf.reduce_sum(sentence_representation, axis=1)  # [batch_size*num_sentences, d_model]
+        return sentence_representation
 
     def _attention_sentence_level(self, hidden_state_sentence):
         """
