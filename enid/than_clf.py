@@ -326,13 +326,13 @@ class T_HAN(object):
                 predicted target values based on trained model
         """
         number_examples = t_test.shape[0]
-        fake_samples = number_examples % self.batch_size
+        fake_samples = self.batch_size - (number_examples % self.batch_size)
         if fake_samples > 0:
             t_test = np.concatenate([t_test, t_test[-fake_samples:]], axis=0)
             x_test = np.concatenate([x_test, x_test[-fake_samples:]], axis=0)
 
         y_probs = np.empty((0))
-        for start, end in zip(range(0, number_examples+fake_samples, self.batch_size), range(self.batch_size, number_examples+fake_samples, self.batch_size)):
+        for start, end in zip(range(0, number_examples+fake_samples+1, self.batch_size), range(self.batch_size, number_examples+fake_samples+1, self.batch_size)):
             feed_dict = {self.input_x: x_test[start:end],
                          self.input_t: t_test[start:end]}
             probs = self.sess.run(self.probs, feed_dict)[:, 0]
