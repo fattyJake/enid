@@ -111,7 +111,7 @@ class T_HAN(object):
             self.dropout_keep_prob = kwargs['dropout_keep_prob']
             self.l2_reg_lambda = kwargs.get('l2_reg_lambda', 0.0)
             self.learning_rate = kwargs['learning_rate']
-            self.grad_clip_thres = kwargs.get('grad_clip_thres', 1.0)
+            self.grad_clip_thres = kwargs.get('grad_clip_thres', None)
             self.initializer = kwargs.get('initializer', tf.orthogonal_initializer())
             self.objective = kwargs.get('objective', 'ce')
 
@@ -297,7 +297,7 @@ class T_HAN(object):
                 if counter % evaluate_every == 0:
                     #train_accu, _ = model.auc.eval(feed_dict, session=sess)
                     dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, batch_size, writer_val)
-                    print('Step: {: <5}  |  Loss: {:2.9f}  |  Development Loss: {:2.8f}  |  Development AUROC: {:2.8f}'.format(counter, curr_loss, dev_loss, dev_accu))
+                    print(f'Step: {counter: <5}  |  Loss: {curr_loss:10.7f}  |  Development Loss: {dev_loss:10.7f}  |  Development AUROC: {dev_accu: 10.7f}')
             self.sess.run(self.epoch_increment)
 
             # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
@@ -397,10 +397,12 @@ class T_HAN(object):
         """
         learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay_rate, staircase=True)
         self.lr_sum = tf.summary.scalar("learning_rate", learning_rate)
-        self.train_op = tf.train.AdamOptimizer(learning_rate)
-        grads_and_vars = self.train_op.compute_gradients(self.loss_val)
-        clipped = [(tf.clip_by_value(grad, -self.grad_clip_thres, self.grad_clip_thres), var) for grad, var in grads_and_vars]
-        self.train_op = self.train_op.apply_gradients(clipped, global_step=self.global_step)
+        if self.grad_clip_thres:
+            self.train_op = tf.train.AdamOptimizer(learning_rate)
+            gradients, variables = zip(*self.train_op.compute_gradients(self.loss_val))
+            gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_thres)
+            self.train_op = self.train_op.apply_gradients(zip(gradients, variables), global_step=self.global_step)
+        else: self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
 
     def _loss(self, l2_reg_lambda):
         with tf.name_scope("loss"):

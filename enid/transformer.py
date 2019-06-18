@@ -122,14 +122,13 @@ class MultiHeadAttention(object):
         """
         with tf.variable_scope(scope):
             # 1. split Q,K,V
-            Q_heads = tf.concat(tf.split(Q, self.h, axis=2), axis=0)  # [batch*h,sequence_length,d_k]
+            Q_heads = tf.concat(tf.split(Q, self.h, axis=2), axis=0)    # [batch*h,sequence_length,d_k]
             K_heads = tf.concat(tf.split(K_s, self.h, axis=2), axis=0)  # [batch*h,sequence_length,d_k]
             V_heads = tf.concat(tf.split(V_s, self.h, axis=2), axis=0)  # [batch*h,sequence_length,d_k]
 
             # 2. dot product of Q,K
             dot_product = tf.matmul(Q_heads, K_heads, transpose_b=True)  # [batch*h,sequence_length,sequence_length]
-            dot_product = dot_product * (
-                        1.0 / tf.sqrt(tf.cast(self.d_model, tf.float32)))  # [batch*h,sequence_length,sequence_length]
+            dot_product = dot_product * (1.0 / tf.sqrt(tf.cast(self.d_model, tf.float32)))  # [batch*h,sequence_length,sequence_length]
 
             # 3. add mask if it is none
             # if self.mask is not None:
@@ -154,7 +153,7 @@ class FeedFoward(object):  # TODO make it parallel
     Feed-Forward Networks
     In addition to attention sub-layers, each of the layers in our encoder and decoder contains a fully
     connected feed-forward network, which is applied to each position separately and identically. This
-    consists of two linear transformations with a ReLU activation in between.
+    consists of two linear transformations with a ELU activation in between.
 
     FFN(x) = max(0,xW1+b1)W2+b2
 
@@ -182,7 +181,7 @@ class FeedFoward(object):  # TODO make it parallel
         """ linear projection (weight_shape: input size, output size) """
         with tf.variable_scope(scope or "linear"):
             if activation:
-                layer = tf.keras.layers.Dense(units, activation=tf.nn.relu)
+                layer = tf.keras.layers.Dense(units, activation=tf.nn.elu)
             else:
                 layer = tf.keras.layers.Dense(units)
             return layer(x)

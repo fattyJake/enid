@@ -121,7 +121,9 @@ class T_HAN(object):
             self.dropout_keep_prob = kwargs.get('dropout_keep_prob', 0.8)
             self.l2_reg_lambda = kwargs.get('l2_reg_lambda', 0.0)
             self.learning_rate = kwargs.get('learning_rate', 0.0001)
-            self.grad_clip_thres = kwargs.get('grad_clip_thres', 1.0)
+            self.grad_clip_thres = kwargs.get('grad_clip_thres', None)
+            self.decay_steps = kwargs.get('decay_steps', 5000)
+            self.decay_rate = kwargs.get('decay_rate', 0.9)
             self.initializer = kwargs.get('initializer', tf.orthogonal_initializer())
             self.objective = kwargs.get('objective', 'ce')
 
@@ -130,7 +132,6 @@ class T_HAN(object):
                 self.global_step = tf.Variable(0, trainable=False, name="Global_Step")
                 self.epoch_step = tf.Variable(0, trainable=False, name="Epoch_Step")
                 self.epoch_increment = tf.assign(self.epoch_step, tf.add(self.epoch_step, tf.constant(1)))
-                self.decay_steps, self.decay_rate = kwargs['decay_steps'], kwargs['decay_rate']
 
                 # add placeholder
                 self.input_x = tf.placeholder(tf.int32, [self.batch_size, self.max_sequence_length, self.max_sentence_length], name="input_x") # X [instance_size, num_bucket, sentence_length]
@@ -230,9 +231,6 @@ class T_HAN(object):
         
         Parameters
         ----------
-        model: object of T_HAN
-            initialized Time-Aware HAN model
-
         t_train: 2-D numpy array, shape (num_exemplars, num_bucket)
             variable indices all buckets and sections
 
@@ -253,6 +251,9 @@ class T_HAN(object):
 
         model_path: str
             the path to store the model
+
+        debug: boolean, default False
+            if True, run TensorFlow Session as interactive debug session.
         """
 
         # get number of input exemplars
@@ -303,7 +304,7 @@ class T_HAN(object):
                 if counter % evaluate_every == 0:
                     #train_accu, _ = model.auc.eval(feed_dict, session=sess)
                     dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, writer_val)
-                    print(f'Step: {counter: <5}  |  Loss: {curr_loss:11.7f}  |  Development Loss: {dev_loss:11.7f}  |  Development AUROC: {dev_accu: 9.7f}')
+                    print(f'Step: {counter: <5}  |  Loss: {curr_loss:10.7f}  |  Development Loss: {dev_loss:10.7f}  |  Development AUROC: {dev_accu: 10.7f}')
             self.sess.run(self.epoch_increment)
 
             # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
@@ -402,10 +403,12 @@ class T_HAN(object):
         """
         learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay_rate)
         self.lr_sum = tf.summary.scalar("learning_rate", learning_rate)
-        self.train_op = tf.train.AdamOptimizer(learning_rate)
-        grads_and_vars = self.train_op.compute_gradients(self.loss_val)
-        clipped = [(tf.clip_by_value(grad, -self.grad_clip_thres, self.grad_clip_thres), var) for grad, var in grads_and_vars]
-        self.train_op = self.train_op.apply_gradients(clipped, global_step=self.global_step)
+        if self.grad_clip_thres:
+            self.train_op = tf.train.AdamOptimizer(learning_rate)
+            gradients, variables = zip(*self.train_op.compute_gradients(self.loss_val))
+            gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_thres)
+            self.train_op = self.train_op.apply_gradients(zip(gradients, variables), global_step=self.global_step)
+        else: self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
 
     def _loss(self, l2_reg_lambda):
         with tf.name_scope("loss"):

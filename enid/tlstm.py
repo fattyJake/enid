@@ -217,11 +217,11 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
         i, j, f, o = array_ops.split(value=concat, num_or_size_splits=4, axis=1)
         g = self._activation(j)  # gating
 
-        # variational dropout
-        i = nn_ops.dropout(i, self._keep_prob_i)
-        g = nn_ops.dropout(g, self._keep_prob_g)
-        f = nn_ops.dropout(f, self._keep_prob_f)
-        o = nn_ops.dropout(o, self._keep_prob_o)
+        # # variational dropout
+        # i = nn_ops.dropout(i, self._keep_prob_i)
+        # g = nn_ops.dropout(g, self._keep_prob_g)
+        # f = nn_ops.dropout(f, self._keep_prob_f)
+        # o = nn_ops.dropout(o, self._keep_prob_o)
 
         gated_in = math_ops.sigmoid(i) * g
         memory = c * math_ops.sigmoid(f + self._forget_bias)
