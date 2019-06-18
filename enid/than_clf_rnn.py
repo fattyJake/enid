@@ -297,7 +297,7 @@ class T_HAN(object):
                 if counter % evaluate_every == 0:
                     #train_accu, _ = model.auc.eval(feed_dict, session=sess)
                     dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, batch_size, writer_val)
-                    print(f'Step: {counter: <5}  |  Loss: {curr_loss:10.7f}  |  Development Loss: {dev_loss:10.7f}  |  Development AUROC: {dev_accu: 10.7f}')
+                    print(f'Step: {counter: <6}  |  Loss: {curr_loss:10.7f}  |  Development Loss: {dev_loss:10.7f}  |  Development AUROC: {dev_accu: 10.7f}')
             self.sess.run(self.epoch_increment)
 
             # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
