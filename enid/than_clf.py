@@ -48,6 +48,9 @@ class T_HAN(object):
     learning_rate: float
         initial learning rate for Adam Optimizer
 
+    grad_clip_thres: float
+        gradient clip threshold, see https://www.tensorflow.org/api_docs/python/tf/train/Optimizer#processing_gradients_before_applying_them
+
     decay_steps: int
         step frequency to decay the learning rate. e.g. if 5000, model will reduce learning rate by decay_rate every 5000 trained batches
 
@@ -118,6 +121,7 @@ class T_HAN(object):
             self.dropout_keep_prob = kwargs.get('dropout_keep_prob', 0.8)
             self.l2_reg_lambda = kwargs.get('l2_reg_lambda', 0.0)
             self.learning_rate = kwargs.get('learning_rate', 0.0001)
+            self.grad_clip_thres = kwargs.get('grad_clip_thres', 1.0)
             self.initializer = kwargs.get('initializer', tf.orthogonal_initializer())
             self.objective = kwargs.get('objective', 'ce')
 
@@ -398,7 +402,10 @@ class T_HAN(object):
         """
         learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay_rate)
         self.lr_sum = tf.summary.scalar("learning_rate", learning_rate)
-        self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
+        self.train_op = tf.train.AdamOptimizer(learning_rate)
+        grads_and_vars = self.train_op.compute_gradients(self.loss_val)
+        clipped = [(tf.clip_by_value(grad, -self.grad_clip_thres, self.grad_clip_thres), var) for grad, var in grads_and_vars]
+        self.train_op = self.train_op.apply_gradients(clipped, global_step=self.global_step)
 
     def _loss(self, l2_reg_lambda):
         with tf.name_scope("loss"):
