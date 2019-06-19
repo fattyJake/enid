@@ -33,7 +33,7 @@ class MultiHeadAttention(object):
     def _linear(x, units, scope=None):
         """ linear projection (weight_shape: input size, output size) """
         with tf.variable_scope(scope or "linear"):
-            layer = tf.keras.layers.Dense(units)
+            layer = tf.keras.layers.Dense(units, kernel_initializer='he_normal')
             return layer(x)
 
     @staticmethod
@@ -181,9 +181,9 @@ class FeedFoward(object):  # TODO make it parallel
         """ linear projection (weight_shape: input size, output size) """
         with tf.variable_scope(scope or "linear"):
             if activation:
-                layer = tf.keras.layers.Dense(units, activation=tf.nn.elu)
+                layer = tf.keras.layers.Dense(units, activation=tf.nn.relu, kernel_initializer='he_normal')
             else:
-                layer = tf.keras.layers.Dense(units)
+                layer = tf.keras.layers.Dense(units, kernel_initializer='he_normal')
             return layer(x)
 
     def feed_forward_fn(self):

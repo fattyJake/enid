@@ -124,7 +124,7 @@ class T_HAN(object):
             self.grad_clip_thres = kwargs.get('grad_clip_thres', None)
             self.decay_steps = kwargs.get('decay_steps', 5000)
             self.decay_rate = kwargs.get('decay_rate', 0.9)
-            self.initializer = kwargs.get('initializer', tf.orthogonal_initializer())
+            self.initializer = kwargs.get('initializer', tf.initializers.he_normal())
             self.objective = kwargs.get('objective', 'ce')
 
             self.graph = tf.get_default_graph()
@@ -185,12 +185,6 @@ class T_HAN(object):
                 if self.objective == 'auc': self.loss_val = self._loss_roc_auc(self.l2_reg_lambda)
                 self._train()
                 self.predictions = tf.argmax(self.logits, axis=1, name="predictions")  # shape:[batch_size,]
-
-                # # performance
-                # with tf.name_scope("performance"):
-                #     self.test_y = tf.placeholder(tf.int32, [None, self.num_classes])
-                #     self.test_p = tf.placeholder(tf.int32, [None, self.num_classes])
-                #     _, self.auc = tf.metrics.auc(self.test_y, self.test_p, num_thresholds=3000, curve="ROC", name="auc")
 
                 self.loss_sum = tf.summary.scalar("loss_train", self.loss_val)
                 self.attention_sum = tf.summary.histogram("attentions", self.instance_representation)
