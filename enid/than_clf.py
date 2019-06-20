@@ -276,34 +276,38 @@ class T_HAN(object):
         
         # get current epoch
         curr_epoch = self.sess.run(self.epoch_step)
-        for epoch in range(curr_epoch, num_epochs):
-            print('Epoch', epoch+1, '...')
-            counter = 0
+        try:
+            for epoch in range(curr_epoch, num_epochs):
+                print('Epoch', epoch+1, '...')
+                counter = 0
 
-            # loop batch training
-            for start, end in zip(range(0, training_size, self.batch_size), range(self.batch_size, training_size, self.batch_size)):
-                epoch_x = x_train[start:end]
-                epoch_t = t_train[start:end]
-                epoch_y = y_train[start:end]
+                # loop batch training
+                for start, end in zip(range(0, training_size, self.batch_size), range(self.batch_size, training_size, self.batch_size)):
+                    epoch_x = x_train[start:end]
+                    epoch_t = t_train[start:end]
+                    epoch_y = y_train[start:end]
 
-                # create model inputs
-                feed_dict = {self.input_x: epoch_x, self.input_t: epoch_t, self.input_y: epoch_y}
+                    # create model inputs
+                    feed_dict = {self.input_x: epoch_x, self.input_t: epoch_t, self.input_y: epoch_y}
 
-                # train one step
-                curr_loss, _, merged_sum = self.sess.run([self.loss_val, self.train_op, self.merged_sum], feed_dict)
-                writer_train.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
-                counter = counter+1
+                    # train one step
+                    curr_loss, _, merged_sum = self.sess.run([self.loss_val, self.train_op, self.merged_sum], feed_dict)
+                    writer_train.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
+                    counter = counter+1
 
-                # evaluation
-                if counter % evaluate_every == 0:
-                    #train_accu, _ = model.auc.eval(feed_dict, session=sess)
-                    dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, writer_val)
-                    print(f'Step: {counter: <6}  |  Loss: {curr_loss:10.7f}  |  Development Loss: {dev_loss:10.7f}  |  Development AUROC: {dev_accu: 10.7f}')
-            self.sess.run(self.epoch_increment)
+                    # evaluation
+                    if counter % evaluate_every == 0:
+                        #train_accu, _ = model.auc.eval(feed_dict, session=sess)
+                        dev_loss, dev_accu = self._do_eval(x_dev, t_dev, y_dev, writer_val)
+                        print(f'Step: {counter: <6}  |  Loss: {curr_loss:10.7f}  |  Development Loss: {dev_loss:10.7f}  |  Development AUROC: {dev_accu: 10.7f}')
+                self.sess.run(self.epoch_increment)
 
-            # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9: 
+                # write model into disk at the end of each 10 epoch     if epoch > 9 and epoch % 10 == 9:
+                saver.save(self.sess, os.path.join(model_path, 'model'), global_step=self.global_step)
+                print('='*100)
+        except KeyboardInterrupt:
+            print("KeyboardInterrupt Error: saving model...")
             saver.save(self.sess, os.path.join(model_path, 'model'), global_step=self.global_step)
-            print('='*100)
 
         print('End time:', datetime.now())
 
@@ -353,7 +357,7 @@ class T_HAN(object):
                                                       initializer=self.initializer)
             self.W_b_attention_token = tf.get_variable("W_b_attention_token", shape=[self.d_model])
             self.context_vecotor_token = tf.get_variable("what_is_the_informative_token", shape=[self.d_model],
-                                                        initializer=tf.random_normal_initializer(stddev=0.1))
+                                                        initializer=self.initializer)
         
         token_hidden_state_2 = tf.reshape(hidden_state, shape=[-1, self.d_model])
         token_hidden_representation = tf.nn.tanh(tf.matmul(token_hidden_state_2, self.W_w_attention_token) + self.W_b_attention_token)
@@ -377,7 +381,7 @@ class T_HAN(object):
                                                           initializer=self.initializer)
             self.W_b_attention_sentence = tf.get_variable("W_b_attention_sentence", shape=[self.hidden_size])
             self.context_vecotor_sentence = tf.get_variable("what_is_the_informative_sentence",
-                                                            shape=[self.hidden_size], initializer=tf.random_normal_initializer(stddev=0.1))
+                                                            shape=[self.hidden_size], initializer=self.initializer)
         
         hidden_state_2 = tf.reshape(hidden_state_sentence, shape=[-1, self.hidden_size])
         hidden_representation = tf.nn.tanh(tf.matmul(hidden_state_2, self.W_w_attention_sentence) + self.W_b_attention_sentence)
@@ -402,7 +406,9 @@ class T_HAN(object):
             gradients, variables = zip(*self.train_op.compute_gradients(self.loss_val))
             gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_thres)
             self.train_op = self.train_op.apply_gradients(zip(gradients, variables), global_step=self.global_step)
-        else: self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
+        else: self.train_op = tf.contrib.layers.optimize_loss(self.loss_val, self.global_step, learning_rate=self.learning_rate,
+                                                              optimizer='Adam', summaries=["gradients"])
+    #self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
 
     def _loss(self, l2_reg_lambda):
         with tf.name_scope("loss"):
