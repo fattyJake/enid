@@ -406,9 +406,9 @@ class T_HAN(object):
             gradients, variables = zip(*self.train_op.compute_gradients(self.loss_val))
             gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_thres)
             self.train_op = self.train_op.apply_gradients(zip(gradients, variables), global_step=self.global_step)
-        else: self.train_op = tf.contrib.layers.optimize_loss(self.loss_val, self.global_step, learning_rate=self.learning_rate,
-                                                              optimizer='Adam', summaries=["gradients"])
-    #self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
+        else: self.train_op = tf.train.AdamOptimizer(learning_rate).minimize(self.loss_val, global_step=self.global_step)
+    # self.train_op = tf.contrib.layers.optimize_loss(self.loss_val, self.global_step, learning_rate=self.learning_rate,
+    #                                                           optimizer='Adam', summaries=["gradients"])
 
     def _loss(self, l2_reg_lambda):
         with tf.name_scope("loss"):

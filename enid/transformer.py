@@ -95,15 +95,13 @@ class MultiHeadAttention(object):
         :return: result of scaled dot product attention. shape:[sequence_length,d_model]
         """
         with tf.variable_scope(scope):
-            print(self.Q, self.K_s, self.V_s)
             # 1. linearly project the queries,keys and values h times(with different,learned linear projections to d_k,d_k,d_v dimensions)
-            Q_projected = self._linear(self.Q, self.d_model, scope="Q")  # [batch,sequence_length,d_model]
+            Q_projected = self._linear(self.Q, self.d_model, scope="Q")      # [batch,sequence_length,d_model]
             K_s_projected = self._linear(self.K_s, self.d_model, scope="K")  # [batch,sequence_length,d_model]
             V_s_projected = self._linear(self.V_s, self.d_model, scope="V")  # [batch,sequence_length,d_model]
 
             # 2. scaled dot product attention for each projected version of Q,K,V
-            dot_product = self.scaled_dot_product_attention_batch(Q_projected, K_s_projected,
-                                                                  V_s_projected)  # [batch*h,sequence_length,d_k]
+            dot_product = self.scaled_dot_product_attention_batch(Q_projected, K_s_projected, V_s_projected)  # [batch*h,sequence_length,d_k]
 
             # 3. reshape
             dot_product = tf.concat(tf.split(dot_product, self.h, axis=0), axis=2)
@@ -147,7 +145,7 @@ class MultiHeadAttention(object):
             output = tf.matmul(weights, V_heads)  # [batch*h,sequence_length,d_k]
             return output
 
-class FeedFoward(object):  # TODO make it parallel
+class FeedFoward(object):
     """
     Feed-Forward Networks
     In addition to attention sub-layers, each of the layers in our encoder and decoder contains a fully
