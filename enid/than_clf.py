@@ -141,7 +141,7 @@ class T_HAN(object):
                 with tf.name_scope("embedding"):
                     self.emb_size = self.pretrain_embedding.shape[1]
                     embedding_matrix = tf.concat([self.pretrain_embedding, tf.zeros((1, self.emb_size))], axis=0)
-                    self.Embedding = tf.Variable(embedding_matrix, trainable=False, dtype=tf.float32, name='embedding')
+                    self.Embedding = tf.Variable(embedding_matrix, trainable=True, dtype=tf.float32, name='embedding')
 
                 # 1. get emebedding of tokens
                 self.input = tf.nn.embedding_lookup(self.Embedding, self.input_x) # [batch_size, num_bucket, sentence_length, embedding_size]
