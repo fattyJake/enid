@@ -399,7 +399,7 @@ class T_HAN(object):
         """
         based on the loss, use Adam to update parameter
         """
-        learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay_rate)
+        learning_rate = tf.train.exponential_decay(self.learning_rate, self.global_step, self.decay_steps, self.decay_rate, staircase=True)
         self.lr_sum = tf.summary.scalar("learning_rate", learning_rate)
         if self.grad_clip_thres:
             self.train_op = tf.train.AdamOptimizer(learning_rate)
