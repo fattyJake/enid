@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import mpld3
 from .data_helper import HierarchicalVectorizer
-from .than_clf_rnn import T_HAN
+from .than_clf import T_HAN
 
 def monitor_interpreter(data, model_path, step=None, most_recent=20, save_name=None):
     """
@@ -46,7 +46,6 @@ def monitor_interpreter(data, model_path, step=None, most_recent=20, save_name=N
     ----------
     
     """
-    
     model = T_HAN('deploy', model_path=model_path, step=step)
     vec = HierarchicalVectorizer()
     most_recent = min(most_recent, len(data)-1)
@@ -59,8 +58,9 @@ def monitor_interpreter(data, model_path, step=None, most_recent=20, save_name=N
         t_.append(np.expand_dims(t, 0))
         x_.append(np.expand_dims(x, 0))
     t_, x_ = np.concatenate(t_, axis=0), np.concatenate(x_, axis=0)
-    
+
     output = model.deploy(t_, x_)
+    output = (output - output.min()) / (output.max() - output.min())
     del model
     most_recent = output.shape[0]
     data_to_show = {d:data[d] for d in dates[-most_recent:]}
@@ -100,7 +100,7 @@ def monitor_interpreter(data, model_path, step=None, most_recent=20, save_name=N
         
         tooltip = mpld3.plugins.PointHTMLTooltip(scatter, labels=names)
         mpld3.plugins.connect(fig, tooltip)
-        if save_name: fig.savefig(save_name,bbox_inches='tight')#mpld3.save_html(fig, save_name)
+        if save_name: mpld3.save_html(fig, save_name)
         else: mpld3.show(fig)
 
 def attention_interpreter(data, model_path, step=None, most_recent=20, save_name=None):

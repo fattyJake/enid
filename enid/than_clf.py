@@ -16,92 +16,91 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 class T_HAN(object):
-    """
-    A Time-Aware-HAN for claim classification
-    Uses an embedding layer, followed by a token-level inception CNN with attention, a sentence-level time-aware-lstm with attention and sofrmax layer
 
-    Parameters
-    ----------
-    mode: str
-        'train' or 'deploy' mode
-
-    Train Mode Parameters
-    ----------
-    max_sequence_length: int
-        fixed padding latest number of time buckets
-
-    max_sentence_length: int
-        fixed padding number of tokens each time bucket
-
-    num_classes: int
-        the number of y classes
-
-    batch_size: int
-        size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
-
-    hidden_size: int
-        number of T_LSTM units
-
-    pretrain_embedding: 2-D numpy array (vocab_size, embedding_size)
-        random initialzed embedding matrix
-
-    learning_rate: float
-        initial learning rate for Adam Optimizer
-
-    grad_clip_thres: float
-        gradient clip threshold, see https://www.tensorflow.org/api_docs/python/tf/train/Optimizer#processing_gradients_before_applying_them
-
-    decay_steps: int
-        step frequency to decay the learning rate. e.g. if 5000, model will reduce learning rate by decay_rate every 5000 trained batches
-
-    decay_rate: float
-        percentage of learning rate decay rate
-
-    dropout_keep_prob: float
-        percentage of neurons to keep from dropout regularization each layer
-
-    l2_reg_lambda: float, optional (default: .0)
-        L2 regularization lambda for fully-connected layer to prevent potential overfitting
-
-    objective: str, optional (default: 'ce')
-        the objective function (loss) model trains on; if 'ce', use cross-entropy, if 'auc', use AUROC as objective
-
-    initializer: tf tensor initializer object, optional (default: tf.orthogonal_initializer())
-        initializer for fully connected layer weights
-
-    Deploy Mode Parameters
-    ----------
-    model_path: str
-        the path to store the model
-    
-    step: int, optional (defult None)
-        if not None, load specific model with given step    
-
-    Examples
-    --------
-    >>> from enid.than_clf import T_HAN
-    >>> model_1 = T_HAN('train', max_sequence_length=50, max_sentence_length=20,
-            hidden_size=128, num_classes=2, pretrain_embedding=emb,
-            learning_rate=0.05, decay_steps=5000, decay_rate=0.9,
-            dropout_keep_prob=0.8, l2_reg_lambda=0.0,
-            objective='ce')
-    >>> model_1.train(t_train=T, x_train=X,
-                    y_train=y, dev_sample_percentage=0.01,
-                    num_epochs=20, batch_size=64,
-                    evaluate_every=100, model_path='./model/')
-    >>> model_2 = T_HAN('deploy', model_path='./model')
-    >>> model_2.deploy(t_test=T_test, x_test=X_test)
-    array([9.9515426e-01,
-           4.6948572e-03,
-           3.1738445e-02,,
-           ...,
-           9.9895418e-01,
-           5.6348788e-04,
-           9.9940193e-01], dtype=float32)
-    """
     def __init__(self, mode, **kwargs):
+        """
+        A Time-Aware-HAN for claim classification
+        Uses an embedding layer, followed by a token-level inception CNN with attention, a sentence-level time-aware-lstm with attention and sofrmax layer
 
-        """init all hyperparameter here"""
+        Parameters
+        ----------
+        mode: str
+            'train' or 'deploy' mode
+
+        Train Mode Parameters
+        ----------
+        max_sequence_length: int
+            fixed padding latest number of time buckets
+
+        max_sentence_length: int
+            fixed padding number of tokens each time bucket
+
+        num_classes: int
+            the number of y classes
+
+        batch_size: int
+            size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
+
+        hidden_size: int
+            number of T_LSTM units
+
+        pretrain_embedding: 2-D numpy array (vocab_size, embedding_size)
+            random initialzed embedding matrix
+
+        learning_rate: float
+            initial learning rate for Adam Optimizer
+
+        grad_clip_thres: float
+            gradient clip threshold, see https://www.tensorflow.org/api_docs/python/tf/train/Optimizer#processing_gradients_before_applying_them
+
+        decay_steps: int
+            step frequency to decay the learning rate. e.g. if 5000, model will reduce learning rate by decay_rate every 5000 trained batches
+
+        decay_rate: float
+            percentage of learning rate decay rate
+
+        dropout_keep_prob: float
+            percentage of neurons to keep from dropout regularization each layer
+
+        l2_reg_lambda: float, optional (default: .0)
+            L2 regularization lambda for fully-connected layer to prevent potential overfitting
+
+        objective: str, optional (default: 'ce')
+            the objective function (loss) model trains on; if 'ce', use cross-entropy, if 'auc', use AUROC as objective
+
+        initializer: tf tensor initializer object, optional (default: tf.orthogonal_initializer())
+            initializer for fully connected layer weights
+
+        Deploy Mode Parameters
+        ----------
+        model_path: str
+            the path to store the model
+
+        step: int, optional (defult None)
+            if not None, load specific model with given step
+
+        Examples
+        --------
+        >>> from enid.than_clf import T_HAN
+        >>> model_1 = T_HAN('train', max_sequence_length=50, max_sentence_length=20,
+                hidden_size=128, num_classes=2, pretrain_embedding=emb,
+                learning_rate=0.05, decay_steps=5000, decay_rate=0.9,
+                dropout_keep_prob=0.8, l2_reg_lambda=0.0,
+                objective='ce')
+        >>> model_1.train(t_train=T, x_train=X,
+                        y_train=y, dev_sample_percentage=0.01,
+                        num_epochs=20, batch_size=64,
+                        evaluate_every=100, model_path='./model/')
+        >>> model_2 = T_HAN('deploy', model_path='./model')
+        >>> model_2.deploy(t_test=T_test, x_test=X_test)
+        array([9.9515426e-01,
+               4.6948572e-03,
+               3.1738445e-02,,
+               ...,
+               9.9895418e-01,
+               5.6348788e-04,
+               9.9940193e-01], dtype=float32)
+        """
         tf.reset_default_graph()
         assert mode in ['train', 'deploy'], f'AttributeError: mode only acccept "train" or "deploy", got {mode} instead.'
         self.mode = mode
@@ -213,7 +212,10 @@ class T_HAN(object):
             self.probs = self.graph.get_tensor_by_name("output/probs:0")
             self.input_x = self.graph.get_tensor_by_name("input_x:0")
             self.input_t = self.graph.get_tensor_by_name("input_t:0")
+
             self.batch_size = self.input_x.get_shape().as_list()[0]
+            self.max_sequence_length, self.max_sentence_length = self.input_x.get_shape()[1:]
+            self.max_sequence_length, self.max_sentence_length = int(self.max_sequence_length), int(self.max_sentence_length)
 
     def __del__(self):
         if hasattr(self, "sess"): self.sess.close()
@@ -330,9 +332,13 @@ class T_HAN(object):
         """
         number_examples = t_test.shape[0]
         fake_samples = self.batch_size - (number_examples % self.batch_size)
-        if fake_samples > 0:
+        if fake_samples > 0 and fake_samples < number_examples:
             t_test = np.concatenate([t_test, t_test[-fake_samples:]], axis=0)
             x_test = np.concatenate([x_test, x_test[-fake_samples:]], axis=0)
+        if fake_samples > number_examples:
+            sup_rec = int(self.batch_size / number_examples) + 1
+            t_test, x_test = np.concatenate([t_test] * sup_rec, axis=0), np.concatenate([x_test] * sup_rec, axis=0)
+            t_test, x_test = t_test[:self.batch_size], x_test[:self.batch_size]
 
         y_probs = np.empty((0))
         for start, end in zip(range(0, number_examples+fake_samples+1, self.batch_size), range(self.batch_size, number_examples+fake_samples+1, self.batch_size)):
@@ -466,5 +472,5 @@ class T_HAN(object):
             writer_val.add_summary(merged_sum, global_step=self.sess.run(self.global_step))
             eval_loss, eval_probs, eval_counter = eval_loss+curr_eval_loss, np.concatenate([eval_probs, curr_probs]), eval_counter+1
 
-        eval_acc = roc_auc_score(eval_y, eval_probs) #self.sess.run(self.auc, {self.test_y: eval_y, self.test_p: eval_probs})
+        eval_acc = roc_auc_score(eval_y[:, 0], eval_probs[:, 0]) #self.sess.run(self.auc, {self.test_y: eval_y, self.test_p: eval_probs})
         return eval_loss/float(eval_counter), eval_acc

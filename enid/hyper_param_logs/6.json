@@ -1,0 +1,17 @@
+{
+    "num_classes": 2,
+    "max_sequence_length": 40,
+    "max_sentence_length": 30,
+    "batch_size": 128,
+    "d_model": 256,
+    "d_ff": 2048,
+    "h": 8,
+    "encoder_layers": 1,
+    "hidden_size": 256,
+    "dropout_keep_prob": 0.9,
+    "l2_reg_lambda": 1e-06,
+    "learning_rate": 0.0002,
+    "grad_clip_thres": null,
+    "decay_steps": 50000,
+    "decay_rate": 1.0
+}
