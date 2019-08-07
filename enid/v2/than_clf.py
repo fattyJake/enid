@@ -102,10 +102,9 @@ def build_model(num_classes: int, max_sequence_length: int, max_sentence_length:
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate),
                   loss=tf.keras.losses.CategoricalCrossentropy(),
                   metrics=[tf.keras.metrics.AUC(num_thresholds=50*batch_size)])
-    config = {k: v for k, v in locals().items() if k not in ['pretrain_embedding', 'model']}
-    return model, config
+    return model
 
-def train_model(model, config, t_train, x_train, y_train, num_epochs: int = 5, model_path: str = 'model',
+def train_model(model, t_train, x_train, y_train, num_epochs: int = 5, model_path: str = 'model',
                 dev_sample_percentage: float = 0.01, evaluate_every: int = 200):
     """
     Train compiled THAN model
@@ -114,9 +113,6 @@ def train_model(model, config, t_train, x_train, y_train, num_epochs: int = 5, m
     ----------
     model: tf.keras.Model
         built model of THAN
-
-    config: dict
-        dictionary of hyperparameters generated from build_model()
 
     t_train: 2-D numpy array, shape (num_exemplars, num_bucket)
         variable indices all buckets and sections
@@ -174,9 +170,9 @@ def train_model(model, config, t_train, x_train, y_train, num_epochs: int = 5, m
                   validation_data=([t_dev, x_dev], y_dev))
     except KeyboardInterrupt:
         print("KeyboardInterrupt Error: saving model...")
-        save_model(model, model_path, config)
+        save_model(model, model_path)
     
-    save_model(model, model_path, config)
+    save_model(model, model_path)
     return model
 
 def deploy_model(model, t_test, x_test):
@@ -227,14 +223,14 @@ def deploy_model(model, t_test, x_test):
     if fake_samples > 0: return y_probs[:number_examples, 0]
     else: return y_probs[:, 0]
 
-def save_model(model, model_path, config):
+def save_model(model, model_path):
     if not os.path.exists(model_path): os.mkdir(model_path)
-    json.dump(config, open(os.path.join(model_path, 'model_config.json'), 'w'))
+    json.dump(model.get_config(), open(os.path.join(model_path, 'model_config.json'), 'w'))
     model.save_weights(os.path.join(model_path, 'model_weights.h5'))
 
 def load_model(model_path):
-    config   = json.load(open(os.path.join(model_path, 'model_config.json')))
-    model, _ = build_model(**config)
+    config = json.load(open(os.path.join(model_path, 'model_config.json')))
+    model  = build_model(**config)
     init_t = np.zeros(shape=[config['batch_size'], config['max_sequence_length']], dtype='int32')
     init_x = np.zeros(shape=[config['batch_size'], config['max_sequence_length'], config['max_sentence_length']], dtype='int32')
     _ = model.call(inputs=[init_t, init_x])
@@ -302,6 +298,18 @@ class T_HAN(tf.keras.Model):
         probabilities = tf.nn.softmax(logits)
         
         return probabilities  # [batch_size, self.num_classes]. main computation graph is here.
+
+    def get_config(self):
+        return {'num_classes': self.num_classes,
+                'max_sequence_length': self.max_sequence_length,
+                'max_sentence_length': self.max_sentence_length,
+                'batch_size': self.batch_size,
+                'd_model': self.d_model,
+                'd_ff': self.d_ff,
+                'h': self.h,
+                'encoder_layers': self.encoder_layers,
+                'hidden_size': self.hidden_size,
+                'dropout_prob': self.dropout_prob}
 
 class NBatchLogger(tf.keras.callbacks.Callback):
     """
