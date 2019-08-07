@@ -7,6 +7,7 @@
 ###############################################################################
 
 import os
+import pickle
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
 from .transformer import Encoder
@@ -107,8 +108,8 @@ class T_HAN(object):
 
         if self.mode == 'train':
 
+            self.pretrain_embedding = pickle.load(open(os.path.abspath(os.path.join(os.path.dirname(__file__), r"pickle_files", r"embeddings")), "rb"))
             self.num_classes = kwargs['num_classes']
-            self.pretrain_embedding = kwargs['pretrain_embedding']
             self.max_sequence_length = kwargs['max_sequence_length']
             self.max_sentence_length = kwargs['max_sentence_length']
             self.batch_size = kwargs.get('batch_size', 64)
