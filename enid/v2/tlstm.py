@@ -15,6 +15,7 @@ from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import functional_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import gen_math_ops
+from tensorflow.python.eager.def_function import function as tf_function
 
 class TLSTM(Layer):
     """
@@ -51,6 +52,7 @@ class TLSTM(Layer):
 
         self.built = True
 
+    @tf_function
     def _map_elapse_time(self, t):
         c1 = constant_op.constant(1, dtype=dtypes.float32)
         c2 = constant_op.constant(2.7183, dtype=dtypes.float32)
@@ -58,7 +60,8 @@ class TLSTM(Layer):
         Ones = array_ops.ones([1, self.units], dtype=dtypes.float32)
         T = math_ops.matmul(T, Ones)
         return T
-
+    
+    @tf_function
     def _step(self, prev_hidden_memory, concat_input):
 
         prev_hidden_state, prev_cell = array_ops.unstack(prev_hidden_memory)
@@ -91,6 +94,7 @@ class TLSTM(Layer):
 
         return array_ops.stack([current_hidden_state, Ct])
 
+    @tf_function
     def call(self, inputs):
 
         scan_input = array_ops.transpose(inputs, perm=[1, 0, 2]) #scan input is [seq_length x batch_size x input_dim+1]

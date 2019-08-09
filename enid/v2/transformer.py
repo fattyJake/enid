@@ -31,6 +31,7 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         self.output_layer = tf.keras.layers.Dense(self.d_model, activation='relu', kernel_initializer='he_normal', name="output")
 
     @staticmethod
+    @tf.function
     def masking(input_, queries=None, keys=None, type_=None):
         """Masks paddings on keys or queries to inputs
         inputs: 3d tensor. (N, T_q, T_k)
@@ -79,7 +80,8 @@ class MultiHeadAttention(tf.keras.layers.Layer):
 
         return outputs
 
-    def call(self, Q, K_s, V_s):
+    @tf.function
+    def call(self, inputs):
         """
         multi head attention
         :param Q: query.  shape:[batch,sequence_length,d_model]
@@ -89,6 +91,7 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         :return: result of scaled dot product attention. shape:[sequence_length,d_model]
         """
         # 1. linearly project the queries,keys and values h times(with different,learned linear projections to d_k,d_k,d_v dimensions)
+        Q, K_s, V_s = inputs
         Q_projected = self.Q_proj_layer(Q)          # [batch,sequence_length,d_model]
         K_s_projected = self.K_proj_layer(K_s)      # [batch,sequence_length,d_model]
         V_s_projected = self.V_proj_layer(V_s)      # [batch,sequence_length,d_model]
@@ -102,7 +105,8 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         # 4. linear projection
         output = self.output_layer(dot_product)
         return output  # [batch,sequence_length,d_model]
-
+    
+    @tf.function
     def scaled_dot_product_attention_batch(self, Q, K_s, V_s, scope="scaled_dot_product_attention"):
         """
         scaled dot product attention
@@ -162,13 +166,14 @@ class FeedFoward(tf.keras.layers.Layer):
         self.inner_layer = tf.keras.layers.Dense(d_ff, activation="relu", kernel_initializer='he_normal', name="inner_layer")
         self.outer_layer = tf.keras.layers.Dense(d_model, kernel_initializer='he_normal', name="outer_layer")
 
-    def call(self, x):
+    @tf.function
+    def call(self, inputs):
         """
         x:       [batch,sequence_length,d_model]
         :return: [batch,sequence_length,d_model]
         """
         # Inner layer
-        outputs = self.inner_layer(x)
+        outputs = self.inner_layer(inputs)
 
         # Outer layer
         outputs = self.outer_layer(outputs)
@@ -191,7 +196,9 @@ class LayerNormResidualConnection(tf.keras.layers.Layer):
         self.batch_norm_layer = tf.keras.layers.BatchNormalization()
 
     # call residual connection and layer normalization
-    def call(self, x, y):
+    @tf.function
+    def call(self, inputs):
+        x, y = inputs
         if self.use_residual_conn:
             x_residual = x + tf.nn.dropout(y, self.dropout_prob)
             x_layer_norm = self.batch_norm_layer(x_residual)
@@ -223,11 +230,14 @@ class Encoder(tf.keras.layers.Layer):
                               "FF_Resid": LayerNormResidualConnection(layer_index, 'FF_Resid', dropout_prob=dropout_prob, use_residual_conn=use_residual_conn)}
                               for layer_index in range(self.num_layer)]
 
-    def call(self, Q, K_s):
+    @tf.function
+    def call(self, inputs):
+        Q, K_s = inputs
         for layer_index in range(self.num_layer):
             Q, K_s = self.encoder_single_layer(Q, K_s, layer_index)
         return Q, K_s
-
+    
+    @tf.function
     def encoder_single_layer(self, Q, K_s, layer_index):
         """
         singel layer for encoder.each layers has two sub-layers:
@@ -238,14 +248,14 @@ class Encoder(tf.keras.layers.Layer):
         :return:output: shape should be:[batch_size*sequence_length,d_model]
         """
         # 1.1 the first is multi-head self-attention mechanism
-        multi_head_attention_output = self.encode_stack[layer_index]['MultiHeadAttention'](Q, K_s, self.V_s[layer_index])
+        multi_head_attention_output = self.encode_stack[layer_index]['MultiHeadAttention']([Q, K_s, self.V_s[layer_index]])
 
         # 1.2 use LayerNorm(x+Sublayer(x)). all dimension=512.  [batch_size,sequence_length,d_model]
-        multi_head_attention_output = self.encode_stack[layer_index]['MHA_Resid'](K_s, multi_head_attention_output)
+        multi_head_attention_output = self.encode_stack[layer_index]['MHA_Resid']([K_s, multi_head_attention_output])
 
         # 2.1 the second is fully connected feed-forward network.
         feed_forward_output = self.encode_stack[layer_index]['FeedForward'](multi_head_attention_output)
 
         # 2.2 use LayerNorm(x+Sublayer(x)). all dimension=512.
-        feed_forward_output = self.encode_stack[layer_index]['FF_Resid'](multi_head_attention_output, feed_forward_output)
+        feed_forward_output = self.encode_stack[layer_index]['FF_Resid']([multi_head_attention_output, feed_forward_output])
         return feed_forward_output, feed_forward_output

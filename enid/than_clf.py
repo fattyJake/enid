@@ -45,9 +45,6 @@ class T_HAN(object):
         hidden_size: int
             number of T_LSTM units
 
-        pretrain_embedding: 2-D numpy array (vocab_size, embedding_size)
-            random initialzed embedding matrix
-
         learning_rate: float
             initial learning rate for Adam Optimizer
 
@@ -84,8 +81,8 @@ class T_HAN(object):
         --------
         >>> from enid.than_clf import T_HAN
         >>> model_1 = T_HAN('train', max_sequence_length=50, max_sentence_length=20,
-                hidden_size=128, num_classes=2, pretrain_embedding=emb,
-                learning_rate=0.05, decay_steps=5000, decay_rate=0.9,
+                hidden_size=128, num_classes=2, learning_rate=0.05,
+                decay_steps=5000, decay_rate=0.9,
                 dropout_keep_prob=0.8, l2_reg_lambda=0.0,
                 objective='ce')
         >>> model_1.train(t_train=T, x_train=X,

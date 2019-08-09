@@ -25,6 +25,7 @@ class Attention(tf.keras.layers.Layer):
         self.b_a = self.add_weight(name=f'b_{level}', shape=[output_dim], initializer='uniform')
         self.context_vecotor = self.add_weight(name=f'context_vecotor_{level}', shape=[output_dim], initializer='uniform')
     
+    @tf.function
     def call(self, hidden_state):
         """
         @param hidden_state: [batch_size*num_sentences,sentence_length,d_model]
