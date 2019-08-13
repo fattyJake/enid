@@ -260,7 +260,7 @@ enid.visualizations.plot_performance(out_true, out_pred, save_name=None)
 >>> plot_performance(y_true, y_prob, None)
 ```
 <p align="center">
-  <img src="imgs/performance.png" class="center" height="200"/>
+  <img src="imgs/fall_performance.png" class="center" height="200"/>
 </p>
 
 #### function plot_comparison
