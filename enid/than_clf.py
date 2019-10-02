@@ -479,9 +479,9 @@ class T_HAN(object):
                             x_dev, t_dev, y_dev, writer_val
                         )
                         print(
-                            f"Step: {counter: <6}  |  Loss: {curr_loss:10.7f}"\
-                                f"  |  Development Loss: {dev_loss:10.7f}  |"\
-                                    f"  Development AUROC: {dev_accu: 10.7f}"
+                            f"Step: {counter: <6}  |  Loss: {curr_loss:10.7f}"
+                            + f"  |  Development Loss: {dev_loss:10.7f}  |"\
+                            + f"  Development AUROC: {dev_accu: 10.7f}"
                         )
                 self.sess.run(self.epoch_increment)
 

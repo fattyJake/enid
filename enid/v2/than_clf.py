@@ -167,16 +167,19 @@ def train_model(
         whole training ground truth
 
     num_epochs: int
-        number of epochs of training, one epoch means finishing training entire training set
+        number of epochs of training, one epoch means finishing training entire
+        training set
 
     model_path: str
         the path to store the model
 
     dev_sample_percentage: float
-        percentage of x_train seperated from training process and used for validation
+        percentage of x_train seperated from training process and used for
+        validation
 
     evaluate_every: int
-        number of steps to perform a evaluation on development (validation) set and print out info
+        number of steps to perform a evaluation on development (validation) set
+        and print out info
     
     Returns
     ----------
@@ -391,7 +394,16 @@ class T_HAN(tf.keras.Model):
             output_dim=self.d_model,
         )
 
-        # self.tlstm_layer = tf.keras.layers.RNN(TLSTMCell(self.hidden_size, time_aware=True, dropout=self.dropout_prob), return_sequences=True, dynamic=True)
+        # self.tlstm_layer = tf.keras.layers.RNN(
+        #     TLSTMCell(
+        #         self.hidden_size,
+        #         time_aware=True,
+        #         dropout=self.dropout_prob
+        #     ),
+        #     return_sequences=True,
+        #     dynamic=True
+        # )
+
         self.tlstm_layer = TLSTM(
             self.hidden_size, dropout_prob=self.dropout_prob
         )
