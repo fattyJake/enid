@@ -284,12 +284,12 @@ def deploy_model(model, t_test, x_test):
         t_test = np.concatenate([t_test, t_test[-fake_samples:]], axis=0)
         x_test = np.concatenate([x_test, x_test[-fake_samples:]], axis=0)
     if fake_samples > number_examples:
-        sup_rec = int(self.batch_size / number_examples) + 1
+        sup_rec = int(model.batch_size / number_examples) + 1
         t_test, x_test = (
             np.concatenate([t_test] * sup_rec, axis=0),
             np.concatenate([x_test] * sup_rec, axis=0),
         )
-        t_test, x_test = t_test[: self.batch_size], x_test[: self.batch_size]
+        t_test, x_test = t_test[: model.batch_size], x_test[: model.batch_size]
 
     y_probs = model.predict(x=[t_test, x_test], batch_size=model.batch_size)
     if fake_samples > 0:
