@@ -110,6 +110,7 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
         dropout_keep_prob_out: float = 1.0,
         dropout_keep_prob_gate: float = 1.0,
         dropout_keep_prob_forget: float = 1.0,
+        scope: str = '',
     ):
         """Initialize the basic LSTM cell."""
 
@@ -128,6 +129,8 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
         self._keep_prob_f = dropout_keep_prob_forget
         self._keep_prob_o = dropout_keep_prob_out
         self._keep_prob_h = dropout_keep_prob_h
+
+        self._scope = scope
 
     @property
     def state_size(self):
@@ -248,7 +251,10 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
                     c,
                     [self._num_units, self._num_units],
                     bias=True,
-                    scope="decomposition",
+                    scope=(
+                        "decomposition"
+                        + f"{'_'+self._scope if self._scope else ''}"
+                    ),
                 )
             )
             C_ST_dis = math_ops.multiply(T, C_ST)
@@ -260,13 +266,13 @@ class TLSTMCell(rnn_cell_impl.RNNCell):
                 inputs,
                 [inputs.get_shape()[-1], 4 * self._num_units],
                 bias=False,
-                scope="x_weight",
+                scope=f"x_weight{'_'+self._scope if self._scope else ''}",
             )
             hh = self._linear(
                 h,
                 [h.get_shape()[-1], 4 * self._num_units],
                 bias=False,
-                scope="h_weight",
+                scope=f"h_weight{'_'+self._scope if self._scope else ''}",
             )
             bias = vs.get_variable("bias", [4 * self._num_units])
 

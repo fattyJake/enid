@@ -268,16 +268,34 @@ class T_HAN(object):
                     dropout_keep_prob_out=self.dropout_keep_prob,
                     dropout_keep_prob_gate=self.dropout_keep_prob,
                     dropout_keep_prob_forget=self.dropout_keep_prob,
+                    scope="tlstm",
                 )
-                self.hidden_state_sentence, _ = tf.nn.dynamic_rnn(
+                self.hidden_state_sentence_1, _ = tf.nn.dynamic_rnn(
                     self.tlstm_cell,
                     concat_input,
                     dtype=tf.float32,
                     time_major=False,
                 )
 
+                # self.lstm_cell = TLSTMCell(
+                #     self.hidden_size,
+                #     False,
+                #     dropout_keep_prob_in=self.dropout_keep_prob,
+                #     dropout_keep_prob_h=self.dropout_keep_prob,
+                #     dropout_keep_prob_out=self.dropout_keep_prob,
+                #     dropout_keep_prob_gate=self.dropout_keep_prob,
+                #     dropout_keep_prob_forget=self.dropout_keep_prob,
+                #     scope="lstm",
+                # )
+                # self.hidden_state_sentence_2, _ = tf.nn.dynamic_rnn(
+                #     self.lstm_cell,
+                #     self.hidden_state_sentence_1,
+                #     dtype=tf.float32,
+                #     time_major=False,
+                # )
+
                 self.instance_representation = self._attention_sentence_level(
-                    self.hidden_state_sentence
+                    self.hidden_state_sentence_1
                 )
                 with tf.name_scope("output"):
                     self.W_projection = tf.get_variable(
@@ -700,7 +718,7 @@ class T_HAN(object):
             #   pos_weight=self.pos_weight
             # )
             losses = tf.nn.softmax_cross_entropy_with_logits_v2(
-                labels=self.input_y, logits=self.logits
+                labels=self.input_y, logits=self.probs
             )
             loss = tf.reduce_mean(losses)
             l2_losses = (
@@ -726,8 +744,8 @@ class T_HAN(object):
         Wilcoxon-Mann-Whitney Statistic.
         Measures overall performance for a full range of threshold levels.
         """
-        pos = tf.boolean_mask(self.logits, tf.cast(self.input_y, tf.bool))
-        neg = tf.boolean_mask(self.logits, ~tf.cast(self.input_y, tf.bool))
+        pos = tf.boolean_mask(self.probs, tf.cast(self.input_y, tf.bool))
+        neg = tf.boolean_mask(self.probs, ~tf.cast(self.input_y, tf.bool))
 
         pos = tf.expand_dims(pos, 0)
         neg = tf.expand_dims(neg, 1)
