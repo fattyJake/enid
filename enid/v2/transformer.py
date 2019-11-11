@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 ###############################################################################
 # Module:      Neural Network Structure
-# Description: Tranformer (Attention is all you need, https://arxiv.org/abs/1706.03762)
+# Description: Tranformer (Attention is all you need, https://arxiv.org/abs/1706.03762) 
 # Authors:     Yage Wang
 # Created:     5.29.2019
 ###############################################################################
 
 import tensorflow as tf
-
 
 class MultiHeadAttention(tf.keras.layers.Layer):
     """
@@ -18,51 +17,20 @@ class MultiHeadAttention(tf.keras.layers.Layer):
     4.linear projection to get final result
     """
 
-    def __init__(
-        self,
-        layer_index,
-        d_model,
-        sequence_length,
-        h,
-        dropout_prob=0.0,
-        **kwargs,
-    ):
-        super(MultiHeadAttention, self).__init__(
-            name=f"MultiHeadAttention_{layer_index}", **kwargs
-        )
+    def __init__(self, layer_index, d_model, sequence_length, h, dropout_prob=0.0, **kwargs):
+        super(MultiHeadAttention, self).__init__(name=f'MultiHeadAttention_{layer_index}', **kwargs)
 
         self.d_model = d_model
         self.sequence_length = sequence_length
         self.h = h
         self.dropout_prob = dropout_prob
 
-        self.Q_proj_layer = tf.keras.layers.Dense(
-            self.d_model,
-            activation="relu",
-            kernel_initializer="he_normal",
-            name="Q",
-        )
-        self.K_proj_layer = tf.keras.layers.Dense(
-            self.d_model,
-            activation="relu",
-            kernel_initializer="he_normal",
-            name="K",
-        )
-        self.V_proj_layer = tf.keras.layers.Dense(
-            self.d_model,
-            activation="relu",
-            kernel_initializer="he_normal",
-            name="V",
-        )
-        self.output_layer = tf.keras.layers.Dense(
-            self.d_model,
-            activation="relu",
-            kernel_initializer="he_normal",
-            name="output",
-        )
+        self.Q_proj_layer = tf.keras.layers.Dense(self.d_model, activation='relu', kernel_initializer='he_normal', name="Q")
+        self.K_proj_layer = tf.keras.layers.Dense(self.d_model, activation='relu', kernel_initializer='he_normal', name="K")
+        self.V_proj_layer = tf.keras.layers.Dense(self.d_model, activation='relu', kernel_initializer='he_normal', name="V")
+        self.output_layer = tf.keras.layers.Dense(self.d_model, activation='relu', kernel_initializer='he_normal', name="output")
 
     @staticmethod
-    @tf.function
     def masking(input_, queries=None, keys=None, type_=None):
         """Masks paddings on keys or queries to inputs
         inputs: 3d tensor. (N, T_q, T_k)
@@ -93,27 +61,17 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         padding_num = -2 ** 32 + 1
         if type_ in ("k", "key", "keys"):
             # Generate masks
-            masks = tf.sign(
-                tf.reduce_sum(input_tensor=tf.abs(keys), axis=-1)
-            )  # (N, T_k)
+            masks = tf.sign(tf.reduce_sum(input_tensor=tf.abs(keys), axis=-1))  # (N, T_k)
             masks = tf.expand_dims(masks, 1)  # (N, 1, T_k)
-            masks = tf.tile(
-                masks, [1, tf.shape(input=queries)[1], 1]
-            )  # (N, T_q, T_k)
+            masks = tf.tile(masks, [1, tf.shape(input=queries)[1], 1])  # (N, T_q, T_k)
             # Apply masks to inputs
             paddings = tf.ones_like(input_) * padding_num
-            outputs = tf.compat.v1.where(
-                tf.equal(masks, 0), paddings, input_
-            )  # (N, T_q, T_k)
+            outputs = tf.compat.v1.where(tf.equal(masks, 0), paddings, input_)  # (N, T_q, T_k)
         elif type_ in ("q", "query", "queries"):
             # Generate masks
-            masks = tf.sign(
-                tf.reduce_sum(input_tensor=tf.abs(queries), axis=-1)
-            )  # (N, T_q)
+            masks = tf.sign(tf.reduce_sum(input_tensor=tf.abs(queries), axis=-1))  # (N, T_q)
             masks = tf.expand_dims(masks, -1)  # (N, T_q, 1)
-            masks = tf.tile(
-                masks, [1, 1, tf.shape(input=keys)[1]]
-            )  # (N, T_q, T_k)
+            masks = tf.tile(masks, [1, 1, tf.shape(input=keys)[1]])  # (N, T_q, T_k)
             # Apply masks to inputs
             outputs = input_ * masks
         else:
@@ -121,7 +79,6 @@ class MultiHeadAttention(tf.keras.layers.Layer):
 
         return outputs
 
-    @tf.function
     def call(self, inputs):
         """
         multi head attention
@@ -133,18 +90,12 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         """
         # 1. linearly project the queries,keys and values h times(with different,learned linear projections to d_k,d_k,d_v dimensions)
         Q, K_s, V_s = inputs
-        Q_projected = self.Q_proj_layer(Q)  # [batch,sequence_length,d_model]
-        K_s_projected = self.K_proj_layer(
-            K_s
-        )  # [batch,sequence_length,d_model]
-        V_s_projected = self.V_proj_layer(
-            V_s
-        )  # [batch,sequence_length,d_model]
+        Q_projected = self.Q_proj_layer(Q)          # [batch,sequence_length,d_model]
+        K_s_projected = self.K_proj_layer(K_s)      # [batch,sequence_length,d_model]
+        V_s_projected = self.V_proj_layer(V_s)      # [batch,sequence_length,d_model]
 
         # 2. scaled dot product attention for each projected version of Q,K,V
-        dot_product = self.scaled_dot_product_attention_batch(
-            Q_projected, K_s_projected, V_s_projected
-        )  # [batch*h,sequence_length,d_k]
+        dot_product = self.scaled_dot_product_attention_batch(Q_projected, K_s_projected, V_s_projected)  # [batch*h,sequence_length,d_k]
 
         # 3. reshape
         dot_product = tf.concat(tf.split(dot_product, self.h, axis=0), axis=2)
@@ -152,11 +103,8 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         # 4. linear projection
         output = self.output_layer(dot_product)
         return output  # [batch,sequence_length,d_model]
-
-    @tf.function
-    def scaled_dot_product_attention_batch(
-        self, Q, K_s, V_s, scope="scaled_dot_product_attention"
-    ):
+    
+    def scaled_dot_product_attention_batch(self, Q, K_s, V_s, scope="scaled_dot_product_attention"):
         """
         scaled dot product attention
         :param Q:  query.  shape:[batch,sequence_length,d_model]
@@ -165,23 +113,13 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         :return: result of scaled dot product attention. shape:[batch,h,sequence_length,d_k]
         """
         # 1. split Q,K,V
-        Q_heads = tf.concat(
-            tf.split(Q, self.h, axis=2), axis=0
-        )  # [batch*h,sequence_length,d_k]
-        K_heads = tf.concat(
-            tf.split(K_s, self.h, axis=2), axis=0
-        )  # [batch*h,sequence_length,d_k]
-        V_heads = tf.concat(
-            tf.split(V_s, self.h, axis=2), axis=0
-        )  # [batch*h,sequence_length,d_k]
+        Q_heads = tf.concat(tf.split(Q, self.h, axis=2), axis=0)    # [batch*h,sequence_length,d_k]
+        K_heads = tf.concat(tf.split(K_s, self.h, axis=2), axis=0)  # [batch*h,sequence_length,d_k]
+        V_heads = tf.concat(tf.split(V_s, self.h, axis=2), axis=0)  # [batch*h,sequence_length,d_k]
 
         # 2. dot product of Q,K
-        dot_product = tf.matmul(
-            Q_heads, K_heads, transpose_b=True
-        )  # [batch*h,sequence_length,sequence_length]
-        dot_product = dot_product * (
-            1.0 / tf.sqrt(tf.cast(self.d_model, tf.float32))
-        )  # [batch*h,sequence_length,sequence_length]
+        dot_product = tf.matmul(Q_heads, K_heads, transpose_b=True)  # [batch*h,sequence_length,sequence_length]
+        dot_product = dot_product * (1.0 / tf.sqrt(tf.cast(self.d_model, tf.float32)))  # [batch*h,sequence_length,sequence_length]
 
         # 3. add mask if it is none
         # if self.mask is not None:
@@ -191,19 +129,14 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         dot_product = self.masking(dot_product, Q_heads, K_heads, type_="key")
 
         # 4.get possibility
-        weights = tf.nn.softmax(
-            dot_product
-        )  # [batch*h,sequence_length,sequence_length]
+        weights = tf.nn.softmax(dot_product)  # [batch*h,sequence_length,sequence_length]
         # query masking
         weights = self.masking(weights, Q_heads, K_heads, type_="query")
-        weights = tf.nn.dropout(
-            weights, self.dropout_prob
-        )  # [batch*h,sequence_length,sequence_length]
+        weights = tf.nn.dropout(weights, self.dropout_prob)  # [batch*h,sequence_length,sequence_length]
 
         # 5. final output
         output = tf.matmul(weights, V_heads)  # [batch*h,sequence_length,d_k]
         return output
-
 
 class FeedFoward(tf.keras.layers.Layer):
     """
@@ -225,21 +158,11 @@ class FeedFoward(tf.keras.layers.Layer):
         :param layer_index:  index of layer
         :return: shape:[sequence_length,d_model]
         """
-        super(FeedFoward, self).__init__(
-            name=f"FeedFoward_{layer_index}", **kwargs
-        )
+        super(FeedFoward, self).__init__(name=f'FeedFoward_{layer_index}', **kwargs)
 
-        self.inner_layer = tf.keras.layers.Dense(
-            d_ff,
-            activation="relu",
-            kernel_initializer="he_normal",
-            name="inner_layer",
-        )
-        self.outer_layer = tf.keras.layers.Dense(
-            d_model, kernel_initializer="he_normal", name="outer_layer"
-        )
+        self.inner_layer = tf.keras.layers.Dense(d_ff, activation="relu", kernel_initializer='he_normal', name="inner_layer")
+        self.outer_layer = tf.keras.layers.Dense(d_model, kernel_initializer='he_normal', name="outer_layer")
 
-    @tf.function
     def call(self, inputs):
         """
         x:       [batch,sequence_length,d_model]
@@ -260,17 +183,8 @@ class LayerNormResidualConnection(tf.keras.layers.Layer):
     That is, the output of each sub-layer is LayerNorm(x+ Sublayer(x)), where Sublayer(x) is the function implemented by the sub-layer itself.
     """
 
-    def __init__(
-        self,
-        layer_index,
-        mode,
-        dropout_prob=0.1,
-        use_residual_conn=True,
-        **kwargs,
-    ):
-        super(LayerNormResidualConnection, self).__init__(
-            name=f"LayerNormResidualConnection_{mode}_{layer_index}", **kwargs
-        )
+    def __init__(self, layer_index, mode, dropout_prob=0.1, use_residual_conn=True, **kwargs):
+        super(LayerNormResidualConnection, self).__init__(name=f'LayerNormResidualConnection_{mode}_{layer_index}', **kwargs)
 
         self.layer_index = layer_index
         self.dropout_prob = dropout_prob
@@ -278,35 +192,22 @@ class LayerNormResidualConnection(tf.keras.layers.Layer):
         self.batch_norm_layer = tf.keras.layers.BatchNormalization()
 
     # call residual connection and layer normalization
-    @tf.function
     def call(self, inputs):
         x, y = inputs
         if self.use_residual_conn:
             x_residual = x + tf.nn.dropout(y, self.dropout_prob)
-            x_layer_norm = self.batch_norm_layer(x_residual)
+            x_layer_norm = self.batch_norm_layer(x_residual, training=False)
         else:
-            x_layer_norm = self.batch_norm_layer(x)
+            x_layer_norm = self.batch_norm_layer(x, training=False)
         return x_layer_norm
-
 
 class Encoder(tf.keras.layers.Layer):
     """
     base class has some common fields and functions.
     """
 
-    def __init__(
-        self,
-        d_model,
-        d_ff,
-        sequence_length,
-        h,
-        batch_size,
-        num_layer=6,
-        dropout_prob=None,
-        use_residual_conn=True,
-        **kwargs,
-    ):
-        super(Encoder, self).__init__(name=f"Encoder", **kwargs)
+    def __init__(self, d_model, d_ff, sequence_length, h, batch_size, num_layer=6, dropout_prob=None, use_residual_conn=True, **kwargs):
+        super(Encoder, self).__init__(name=f'Encoder', **kwargs)
 
         self.d_model = d_model
         self.d_ff = d_ff
@@ -316,51 +217,20 @@ class Encoder(tf.keras.layers.Layer):
         self.batch_size = batch_size
         self.dropout_prob = dropout_prob
         self.use_residual_conn = use_residual_conn
+        
+        self.V_s = [self.add_weight(name=f'V_{layer_index}', shape=[self.batch_size, self.sequence_length, self.d_model], initializer='he_normal') for layer_index in range(self.num_layer)]
+        self.encode_stack = [{"MultiHeadAttention": MultiHeadAttention(layer_index, self.d_model, self.sequence_length, self.h, dropout_prob=dropout_prob),
+                              "MHA_Resid": LayerNormResidualConnection(layer_index, "MHA_Resid", dropout_prob=dropout_prob, use_residual_conn=use_residual_conn),
+                              "FeedForward": FeedFoward(layer_index, self.d_model, self.d_ff),
+                              "FF_Resid": LayerNormResidualConnection(layer_index, 'FF_Resid', dropout_prob=dropout_prob, use_residual_conn=use_residual_conn)}
+                              for layer_index in range(self.num_layer)]
 
-        self.V_s = [
-            self.add_weight(
-                name=f"V_{layer_index}",
-                shape=[self.batch_size, self.sequence_length, self.d_model],
-                initializer="he_normal",
-            )
-            for layer_index in range(self.num_layer)
-        ]
-        self.encode_stack = [
-            {
-                "MultiHeadAttention": MultiHeadAttention(
-                    layer_index,
-                    self.d_model,
-                    self.sequence_length,
-                    self.h,
-                    dropout_prob=dropout_prob,
-                ),
-                "MHA_Resid": LayerNormResidualConnection(
-                    layer_index,
-                    "MHA_Resid",
-                    dropout_prob=dropout_prob,
-                    use_residual_conn=use_residual_conn,
-                ),
-                "FeedForward": FeedFoward(
-                    layer_index, self.d_model, self.d_ff
-                ),
-                "FF_Resid": LayerNormResidualConnection(
-                    layer_index,
-                    "FF_Resid",
-                    dropout_prob=dropout_prob,
-                    use_residual_conn=use_residual_conn,
-                ),
-            }
-            for layer_index in range(self.num_layer)
-        ]
-
-    @tf.function
     def call(self, inputs):
         Q, K_s = inputs
         for layer_index in range(self.num_layer):
             Q, K_s = self.encoder_single_layer(Q, K_s, layer_index)
         return Q, K_s
-
-    @tf.function
+    
     def encoder_single_layer(self, Q, K_s, layer_index):
         """
         singel layer for encoder.each layers has two sub-layers:
@@ -371,22 +241,14 @@ class Encoder(tf.keras.layers.Layer):
         :return:output: shape should be:[batch_size*sequence_length,d_model]
         """
         # 1.1 the first is multi-head self-attention mechanism
-        multi_head_attention_output = self.encode_stack[layer_index][
-            "MultiHeadAttention"
-        ]([Q, K_s, self.V_s[layer_index]])
+        multi_head_attention_output = self.encode_stack[layer_index]['MultiHeadAttention']([Q, K_s, self.V_s[layer_index]])
 
         # 1.2 use LayerNorm(x+Sublayer(x)). all dimension=512.  [batch_size,sequence_length,d_model]
-        multi_head_attention_output = self.encode_stack[layer_index][
-            "MHA_Resid"
-        ]([K_s, multi_head_attention_output])
+        multi_head_attention_output = self.encode_stack[layer_index]['MHA_Resid']([K_s, multi_head_attention_output])
 
         # 2.1 the second is fully connected feed-forward network.
-        feed_forward_output = self.encode_stack[layer_index]["FeedForward"](
-            multi_head_attention_output
-        )
+        feed_forward_output = self.encode_stack[layer_index]['FeedForward'](multi_head_attention_output)
 
         # 2.2 use LayerNorm(x+Sublayer(x)). all dimension=512.
-        feed_forward_output = self.encode_stack[layer_index]["FF_Resid"](
-            [multi_head_attention_output, feed_forward_output]
-        )
+        feed_forward_output = self.encode_stack[layer_index]['FF_Resid']([multi_head_attention_output, feed_forward_output])
         return feed_forward_output, feed_forward_output

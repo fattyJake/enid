@@ -15,6 +15,7 @@ from .transformer import Encoder
 from .attention import Attention
 from .tlstm import TLSTM
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 def build_model(
     num_classes: int,
@@ -28,7 +29,7 @@ def build_model(
     hidden_size: int = 128,
     dropout_prob: float = 0.1,
     l2_reg_lambda: float = 0.0,
-    learning_rate: int = 0.0001,
+    # learning_rate: int = 0.0001,
 ):
     """
     Build Time-Aware-HAN model for claim classification
@@ -54,7 +55,7 @@ def build_model(
     d_ff: int, optional (default: 1024)
         size of transformer feed forward layer
 
-    hL int, optional (default: 8)
+    h: int, optional (default: 8)
         size of heads in transformer multi-head attention
 
     encoder_layers: int, optional (default: 6)
@@ -76,7 +77,7 @@ def build_model(
     ----------
     trained_model: tf.keras.Model
         built model of THAN
-    
+
     config: dict
         dictionary of THAN hyperparameters
 
@@ -105,7 +106,6 @@ def build_model(
     _________________________________________________________________
     """
 
-    tf.enable_eager_execution()
     tf.keras.backend.clear_session()
 
     pretrain_embedding = pickle.load(
@@ -131,11 +131,11 @@ def build_model(
         hidden_size,
         dropout_prob,
     )
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate),
-        loss=tf.keras.losses.CategoricalCrossentropy(),
-        metrics=[tf.keras.metrics.AUC(num_thresholds=50 * batch_size)],
-    )
+    # model.compile(
+    #     optimizer=tf.keras.optimizers.Adam(learning_rate),
+    #     loss=tf.keras.losses.CategoricalCrossentropy(),
+    #     metrics=[tf.keras.metrics.AUC(num_thresholds=50 * batch_size)],
+    # )
     return model
 
 
@@ -144,6 +144,7 @@ def train_model(
     t_train,
     x_train,
     y_train,
+    learning_rate: int = 0.0001,
     num_epochs: int = 5,
     model_path: str = "model",
     dev_sample_percentage: float = 0.01,
@@ -167,20 +168,17 @@ def train_model(
         whole training ground truth
 
     num_epochs: int
-        number of epochs of training, one epoch means finishing training entire
-        training set
+        number of epochs of training, one epoch means finishing training entire training set
 
     model_path: str
         the path to store the model
 
     dev_sample_percentage: float
-        percentage of x_train seperated from training process and used for
-        validation
+        percentage of x_train seperated from training process and used for validation
 
     evaluate_every: int
-        number of steps to perform a evaluation on development (validation) set
-        and print out info
-    
+        number of steps to perform a evaluation on development (validation) set and print out info
+
     Returns
     ----------
     trained_model: tf.keras.Model
@@ -190,7 +188,7 @@ def train_model(
     --------
     >>> from enid.than_clf import build_model, train_model
     >>> model = build_model(2, 30, 40)
-    >>> train_model(model, t_train, x_train, y_train, num_epoch=2)
+    >>> model = train_model(model, t_train, x_train, y_train, num_epochs=2)
     Epoch 1/2
     723648/723648 [==============================] - 4336s 6ms/sample - loss: 0.4735 - categorical_crossentropy: 0.4735 - val_loss: 0.4703 - val_categorical_crossentropy: 0.4703
     Epoch 2/2
@@ -218,29 +216,102 @@ def train_model(
     )
 
     try:
-        model.fit(
-            x=[t_train, x_train],
-            y=y_train,
-            batch_size=model.batch_size,
-            epochs=num_epochs,
-            verbose=1,
-            callbacks=[
-                tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=1
-                ),
-                tf.keras.callbacks.TensorBoard(
-                    log_dir=os.path.join(model_path, "logs"),
-                    update_freq="batch",
-                    histogram_freq=1,
-                ),
-            ],
-            validation_data=([t_dev, x_dev], y_dev),
+        optimizer = tf.keras.optimizers.Adam(learning_rate)
+
+        train_summry_writer = tf.summary.create_file_writer(
+            os.path.join(model_path, "train")
         )
+        val_summry_writer = tf.summary.create_file_writer(
+            os.path.join(model_path, "vali")
+        )
+        train_summry_writer.as_default()
+        val_summry_writer.as_default()
+
+        counter = 0
+        metric = tf.keras.metrics.AUC(num_thresholds=50 * model.batch_size)
+
+        for epoch in range(1, num_epochs + 1):
+            print("Epoch", epoch, "...")
+
+            # loop batch training
+            for start, end in zip(
+                range(0, training_size, model.batch_size),
+                range(model.batch_size, training_size, model.batch_size),
+            ):
+                epoch_x = x_train[start:end]
+                epoch_t = t_train[start:end]
+                epoch_y = y_train[start:end]
+
+                with tf.GradientTape() as tape:
+                    y_pred = model([epoch_t, epoch_x])
+                    loss = tf.keras.losses.categorical_crossentropy(
+                        y_true=epoch_y[:, 1], y_pred=y_pred[:, 1],
+                    )
+
+                    tf.summary.scalar("train_loss", loss, step=counter)
+
+                    grads = tape.gradient(loss, model.trainable_variables)
+                    optimizer.apply_gradients(
+                        grads_and_vars=zip(grads, model.trainable_variables)
+                    )
+
+                    if counter % evaluate_every == 0:
+                        y_dev_pred = tf.concat(
+                            [
+                                model([t_dev[start:end], x_dev[start:end]])
+                                for start, end in zip(
+                                    range(0, dev_size+1, model.batch_size),
+                                    range(
+                                        model.batch_size,
+                                        dev_size+1,
+                                        model.batch_size,
+                                    ),
+                                )
+                            ],
+                            axis=0,
+                        )
+                        dev_loss = tf.keras.losses.categorical_crossentropy(
+                            y_true=y_dev[:, 1], y_pred=y_dev_pred[:, 1],
+                        )
+
+                        tf.summary.scalar("vali_loss", dev_loss, step=counter)
+
+                        metric.update_state(y_dev, y_dev_pred)
+                        auc = metric.result().numpy()
+                        tf.summary.scalar("auc", auc, step=counter)
+
+                        print(
+                            f"Step: {counter: <6}  |  Loss: {loss:10.7f}  |"
+                            f"  Development Loss: {dev_loss:10.7f}  |"
+                            f"  Development AUROC: {auc: 10.7f}"
+                        )
+                counter += 1
+            
+            save_model(model, model_path)
+            print("=" * 100)
+
+        # model.fit(
+        #     x=[t_train, x_train],
+        #     y=y_train,
+        #     batch_size=model.batch_size,
+        #     epochs=num_epochs,
+        #     verbose=1,
+        #     callbacks=[
+        #         tf.keras.callbacks.EarlyStopping(
+        #             monitor="val_loss", patience=1
+        #         ),
+        #         tf.keras.callbacks.TensorBoard(
+        #             log_dir=os.path.join(model_path, "logs"),
+        #             update_freq="batch",
+        #             histogram_freq=1,
+        #         ),
+        #     ],
+        #     validation_data=([t_dev, x_dev], y_dev),
+        # )
     except KeyboardInterrupt:
         print("KeyboardInterrupt Error: saving model...")
         save_model(model, model_path)
 
-    save_model(model, model_path)
     return model
 
 
@@ -301,30 +372,32 @@ def deploy_model(model, t_test, x_test):
 def save_model(model, model_path):
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    json.dump(
-        model.get_config(),
-        open(os.path.join(model_path, "model_config.json"), "w"),
-    )
-    model.save_weights(os.path.join(model_path, "model_weights.h5"))
+    tf.saved_model.save(model, model_path)
+    # json.dump(
+    #     model.get_config(),
+    #     open(os.path.join(model_path, "model_config.json"), "w"),
+    # )
+    # model.save_weights(os.path.join(model_path, "model_weights.h5"))
 
 
 def load_model(model_path):
-    config = json.load(open(os.path.join(model_path, "model_config.json")))
-    model = build_model(**config)
-    init_t = np.zeros(
-        shape=[config["batch_size"], config["max_sequence_length"]],
-        dtype="int32",
-    )
-    init_x = np.zeros(
-        shape=[
-            config["batch_size"],
-            config["max_sequence_length"],
-            config["max_sentence_length"],
-        ],
-        dtype="int32",
-    )
-    _ = model.call(inputs=[init_t, init_x])
-    model.load_weights(os.path.join(model_path, "model_weights.h5"))
+    model = tf.saved_model.load(model_path)
+    # config = json.load(open(os.path.join(model_path, "model_config.json")))
+    # model = build_model(**config)
+    # init_t = np.zeros(
+    #     shape=[config["batch_size"], config["max_sequence_length"]],
+    #     dtype="int32",
+    # )
+    # init_x = np.zeros(
+    #     shape=[
+    #         config["batch_size"],
+    #         config["max_sequence_length"],
+    #         config["max_sentence_length"],
+    #     ],
+    #     dtype="int32",
+    # )
+    # _ = model.call(inputs=[init_t, init_x])
+    # model.load_weights(os.path.join(model_path, "model_weights.h5"))
 
     return model
 
@@ -394,16 +467,7 @@ class T_HAN(tf.keras.Model):
             output_dim=self.d_model,
         )
 
-        # self.tlstm_layer = tf.keras.layers.RNN(
-        #     TLSTMCell(
-        #         self.hidden_size,
-        #         time_aware=True,
-        #         dropout=self.dropout_prob
-        #     ),
-        #     return_sequences=True,
-        #     dynamic=True
-        # )
-
+        # self.tlstm_layer = tf.keras.layers.RNN(TLSTMCell(self.hidden_size, time_aware=True, dropout=self.dropout_prob), return_sequences=True, dynamic=True)
         self.tlstm_layer = TLSTM(
             self.hidden_size, dropout_prob=self.dropout_prob
         )
@@ -465,9 +529,7 @@ class T_HAN(tf.keras.Model):
         logits = self.output_projection_layer(instance_representation)
         probabilities = tf.nn.softmax(logits)
 
-        return (
-            probabilities
-        )  # [batch_size, self.num_classes]. main computation graph is here.
+        return probabilities  # [batch_size, self.num_classes]. main computation graph is here.
 
     def get_config(self):
         return {
