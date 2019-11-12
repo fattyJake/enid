@@ -230,6 +230,52 @@ def train_model(
         counter = 0
         metric = tf.keras.metrics.AUC(num_thresholds=50 * model.batch_size)
 
+
+        @tf.function
+        def training_step(epoch_x, epoch_t, epoch_y):
+            with tf.GradientTape() as tape:
+                y_pred = model([epoch_t, epoch_x])
+                loss = tf.keras.losses.categorical_crossentropy(
+                    y_true=epoch_y[:, 1], y_pred=y_pred[:, 1],
+                )
+
+            tf.summary.scalar("train_loss", loss, step=counter)
+
+            grads = tape.gradient(loss, model.trainable_variables)
+            optimizer.apply_gradients(
+                grads_and_vars=zip(grads, model.trainable_variables)
+            )
+
+            if counter % evaluate_every == 0:
+                y_dev_pred = tf.concat(
+                    [
+                        model([t_dev[start:end], x_dev[start:end]])
+                        for start, end in zip(
+                        range(0, dev_size + 1, model.batch_size),
+                        range(
+                            model.batch_size,
+                            dev_size + 1,
+                            model.batch_size,
+                        ),
+                    )
+                    ],
+                    axis=0,
+                )
+                dev_loss = tf.keras.losses.categorical_crossentropy(
+                    y_true=y_dev[:, 1], y_pred=y_dev_pred[:, 1],
+                )
+
+                tf.summary.scalar("vali_loss", dev_loss, step=counter)
+
+                metric.update_state(y_dev, y_dev_pred)
+                auc = metric.result()
+                tf.summary.scalar("auc", auc, step=counter)
+            else:
+                dev_loss, auc = None, None
+
+            return loss, dev_loss, auc
+
+
         for epoch in range(1, num_epochs + 1):
             print("Epoch", epoch, "...")
 
@@ -241,50 +287,15 @@ def train_model(
                 epoch_x = x_train[start:end]
                 epoch_t = t_train[start:end]
                 epoch_y = y_train[start:end]
+                loss, dev_loss, auc = training_step(epoch_x, epoch_t, epoch_y)
 
-                with tf.GradientTape() as tape:
-                    y_pred = model([epoch_t, epoch_x])
-                    loss = tf.keras.losses.categorical_crossentropy(
-                        y_true=epoch_y[:, 1], y_pred=y_pred[:, 1],
+                if dev_loss:
+                    print(
+                        f"Step: {counter: <6}  |  Loss: {loss:10.7f}  |"
+                        f"  Development Loss: {dev_loss:10.7f}  |"
+                        f"  Development AUROC: {auc.numpy(): 10.7f}"
                     )
 
-                    tf.summary.scalar("train_loss", loss, step=counter)
-
-                    grads = tape.gradient(loss, model.trainable_variables)
-                    optimizer.apply_gradients(
-                        grads_and_vars=zip(grads, model.trainable_variables)
-                    )
-
-                    if counter % evaluate_every == 0:
-                        y_dev_pred = tf.concat(
-                            [
-                                model([t_dev[start:end], x_dev[start:end]])
-                                for start, end in zip(
-                                    range(0, dev_size+1, model.batch_size),
-                                    range(
-                                        model.batch_size,
-                                        dev_size+1,
-                                        model.batch_size,
-                                    ),
-                                )
-                            ],
-                            axis=0,
-                        )
-                        dev_loss = tf.keras.losses.categorical_crossentropy(
-                            y_true=y_dev[:, 1], y_pred=y_dev_pred[:, 1],
-                        )
-
-                        tf.summary.scalar("vali_loss", dev_loss, step=counter)
-
-                        metric.update_state(y_dev, y_dev_pred)
-                        auc = metric.result().numpy()
-                        tf.summary.scalar("auc", auc, step=counter)
-
-                        print(
-                            f"Step: {counter: <6}  |  Loss: {loss:10.7f}  |"
-                            f"  Development Loss: {dev_loss:10.7f}  |"
-                            f"  Development AUROC: {auc: 10.7f}"
-                        )
                 counter += 1
             
             save_model(model, model_path)
