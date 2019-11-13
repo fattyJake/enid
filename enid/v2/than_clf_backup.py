@@ -15,6 +15,7 @@ from .transformer import Encoder
 from .attention import Attention
 from .tlstm import TLSTM
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 def build_model(
     num_classes: int,
@@ -28,13 +29,11 @@ def build_model(
     hidden_size: int = 128,
     dropout_prob: float = 0.1,
     l2_reg_lambda: float = 0.0,
-    learning_rate: int = 0.0001,
+    # learning_rate: int = 0.0001,
 ):
     """
     Build Time-Aware-HAN model for claim classification
-    Uses an embedding layer, followed by a token-level transformer encoding
-    with attention, a sentence-level time-aware-lstm with attention and sofrmax
-    layer
+    Uses an embedding layer, followed by a token-level transformer encoding with attention, a sentence-level time-aware-lstm with attention and sofrmax layer
 
     Parameters
     ----------
@@ -48,8 +47,7 @@ def build_model(
         fixed padding number of tokens each time bucket
 
     batch_size: int, optional (default: 64)
-        size of training batches, this won't affect training speed
-        significantly; smaller batch leads to more regularization
+        size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
 
     d_model: int, optional (default: 256)
         sizes of transformer Q, K, V vectors
@@ -70,8 +68,7 @@ def build_model(
         percentage of neurons to drop each layer
 
     l2_reg_lambda: float, optional (default: .0)
-        L2 regularization lambda for fully-connected layer to prevent potential
-        overfitting
+        L2 regularization lambda for fully-connected layer to prevent potential overfitting
 
     learning_rate: int, optional (default: 1e-04)
         model learning rate
@@ -134,12 +131,52 @@ def build_model(
         hidden_size,
         dropout_prob,
     )
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate),
-        loss=tf.keras.losses.CategoricalCrossentropy(),
-        metrics=[tf.keras.metrics.AUC(num_thresholds=50 * batch_size)],
-    )
+    # model.compile(
+    #     optimizer=tf.keras.optimizers.Adam(learning_rate),
+    #     loss=tf.keras.losses.CategoricalCrossentropy(),
+    #     metrics=[tf.keras.metrics.AUC(num_thresholds=50 * batch_size)],
+    # )
     return model
+
+
+@tf.function
+def training_step(model, optimizer, epoch_t, epoch_x, epoch_y):
+    with tf.GradientTape() as tape:
+        y_pred = model([epoch_t, epoch_x])
+        loss = tf.keras.losses.binary_crossentropy(
+            y_true=epoch_y[:, 1], y_pred=y_pred[:, 1],
+        )
+
+    grads = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(
+        grads_and_vars=zip(grads, model.trainable_variables)
+    )
+
+    return loss
+
+
+@tf.function
+def validation_step(model, metrics, t_dev,  x_dev, y_dev, dev_size):
+    y_dev_pred = tf.concat(
+        [
+            model([t_dev[start:end], x_dev[start:end]])
+            for start, end in zip(
+            range(0, dev_size + 1, model.batch_size),
+            range(
+                model.batch_size,
+                dev_size + 1,
+                model.batch_size,
+            ),
+        )
+        ],
+        axis=0,
+    )
+    dev_loss = tf.keras.losses.binary_crossentropy(
+        y_true=y_dev[:, 1], y_pred=y_dev_pred[:, 1],
+    )
+
+    metrics.update_state(y_dev, y_dev_pred)
+    return dev_loss
 
 
 def train_model(
@@ -147,6 +184,7 @@ def train_model(
     t_train,
     x_train,
     y_train,
+    learning_rate: int = 0.0001,
     num_epochs: int = 5,
     model_path: str = "model",
     dev_sample_percentage: float = 0.01,
@@ -170,19 +208,16 @@ def train_model(
         whole training ground truth
 
     num_epochs: int
-        number of epochs of training, one epoch means finishing training entire
-        training set
+        number of epochs of training, one epoch means finishing training entire training set
 
     model_path: str
         the path to store the model
 
     dev_sample_percentage: float
-        percentage of x_train seperated from training process and used for
-        validation
+        percentage of x_train seperated from training process and used for validation
 
     evaluate_every: int
-        number of steps to perform a evaluation on development (validation) set
-        and print out info
+        number of steps to perform a evaluation on development (validation) set and print out info
 
     Returns
     ----------
@@ -194,10 +229,10 @@ def train_model(
     >>> from enid.than_clf import build_model, train_model
     >>> model = build_model(2, 30, 40)
     >>> model = train_model(model, t_train, x_train, y_train, num_epochs=2)
-    Epoch 1...
-    Step: 100     |  Loss:  0.6245573  |  Development Loss:  0.3502102  |  ...
-    Step: 200     |  Loss:  0.6902801  |  Development Loss:  0.3339590  |  ...
-    ...
+    Epoch 1/2
+    723648/723648 [==============================] - 4336s 6ms/sample - loss: 0.4735 - categorical_crossentropy: 0.4735 - val_loss: 0.4703 - val_categorical_crossentropy: 0.4703
+    Epoch 2/2
+    723648/723648 [==============================] - 4375s 6ms/sample - loss: 0.4566 - categorical_crossentropy: 0.4566 - val_loss: 0.4736 - val_categorical_crossentropy: 0.4736
     """
 
     training_size = int(y_train.shape[0] / model.batch_size) * model.batch_size
@@ -221,19 +256,21 @@ def train_model(
     )
 
     try:
+        optimizer = tf.keras.optimizers.Adam(learning_rate)
+
         train_summary_writer = tf.summary.create_file_writer(
-            os.path.join(model_path, 'train')
+            os.path.join(model_path, "train")
         )
         val_summary_writer = tf.summary.create_file_writer(
-            os.path.join(model_path, 'validation')
+            os.path.join(model_path, "vali")
         )
-        
-        counter = 1
+
+        counter = 0
         metrics = tf.keras.metrics.AUC(num_thresholds=50 * model.batch_size)
-        
+
         for epoch in range(1, num_epochs + 1):
             print("Epoch", epoch, "...")
-        
+
             # loop batch training
             for start, end in zip(
                 range(0, training_size, model.batch_size),
@@ -242,25 +279,30 @@ def train_model(
                 epoch_x = x_train[start:end]
                 epoch_t = t_train[start:end]
                 epoch_y = y_train[start:end]
-                loss = model.train_on_batch(x=[epoch_t, epoch_x], y=epoch_y)
-                loss = np.mean(loss)
-
+                loss = training_step(
+                    model, optimizer, epoch_t, epoch_x, epoch_y
+                )
+                loss = loss.numpy().mean()
                 with train_summary_writer.as_default():
                     tf.summary.scalar('loss', loss, step=counter)
-        
+
                 if counter % evaluate_every == 0:
-                    dev_loss = _validation_step(
+                    dev_loss = validation_step(
                         model, metrics, t_dev, x_dev, y_dev, dev_size
                     )
                     dev_loss = dev_loss.numpy().mean()
                     with val_summary_writer.as_default():
                         tf.summary.scalar(
-                            'validation_loss', dev_loss, step=counter
+                            'validation_loss',
+                            dev_loss,
+                            step=counter
                         )
                         tf.summary.scalar(
-                            'validation_auc', metrics.result(), step=counter
+                            'validation_auc',
+                            metrics.result(),
+                            step=counter
                         )
-        
+
                     print(
                         f"Step: {counter: <6}  |  Loss: {loss:10.7f}  |  "
                         + f"Development Loss: {dev_loss:10.7f}  |  Development"
@@ -270,7 +312,7 @@ def train_model(
                     metrics.reset_states()
 
                 counter += 1
-        
+            
             save_model(model, model_path)
             print("=" * 100)
 
@@ -346,42 +388,16 @@ def deploy_model(model, t_test, x_test):
         )
         t_test, x_test = t_test[: model.batch_size], x_test[: model.batch_size]
 
-    y_probs = np.empty((0))
-    for start, end in zip(
-        range(0, number_examples + fake_samples + 1, model.batch_size),
-        range(
-            model.batch_size,
-            number_examples + fake_samples + 1,
-            model.batch_size,
-        ),
-    ):
-        probs = model.call([t_test[start:end], x_test[start:end]], False)[:, 0]
-        y_probs = np.concatenate([y_probs, probs])
+    y_probs = model.predict(x=[t_test, x_test], batch_size=model.batch_size)
     if fake_samples > 0:
-        return y_probs[:number_examples]
+        return y_probs[:number_examples, 0]
     else:
-        return y_probs
+        return y_probs[:, 0]
 
 
 def save_model(model, model_path):
     if not os.path.exists(model_path):
         os.mkdir(model_path)
-    model.call.get_concrete_function(
-        inputs=[
-            tf.TensorSpec(
-                shape=(model.batch_size, model.max_sequence_length),
-                dtype=tf.int32
-            ),
-            tf.TensorSpec(
-                shape=(
-                    model.batch_size,
-                    model.max_sequence_length,
-                    model.max_sentence_length
-                ),
-                dtype=tf.int32
-            )
-        ]
-    )
     tf.saved_model.save(model, model_path)
     # json.dump(
     #     model.get_config(),
@@ -489,8 +505,7 @@ class T_HAN(tf.keras.Model):
 
         self.output_projection_layer = tf.keras.layers.Dense(self.num_classes)
 
-    @tf.function
-    def call(self, inputs):
+    def call(self, inputs, training=False):
 
         input_t, input_x = inputs
 
@@ -557,24 +572,28 @@ class T_HAN(tf.keras.Model):
         }
 
 
-def _validation_step(model, metrics, t_dev,  x_dev, y_dev, dev_size):
-    y_dev_pred = tf.concat(
-        [
-            model([t_dev[start:end], x_dev[start:end]])
-            for start, end in zip(
-            range(0, dev_size + 1, model.batch_size),
-            range(
-                model.batch_size,
-                dev_size + 1,
-                model.batch_size,
-            ),
-        )
-        ],
-        axis=0,
-    )
-    dev_loss = tf.keras.losses.binary_crossentropy(
-        y_true=y_dev[:, 1], y_pred=y_dev_pred[:, 1],
-    )
+class NBatchLogger(tf.keras.callbacks.Callback):
+    """
+    A Logger that log average performance per `display` steps.
+    """
 
-    metrics.update_state(y_dev, y_dev_pred)
-    return dev_loss
+    def __init__(self, display):
+        self.step = 0
+        self.display = display
+        self.metric_cache = {}
+
+    def on_batch_end(self, batch, logs={}):
+        self.step += 1
+        for k in self.params["metrics"]:
+            if k in logs:
+                self.metric_cache[k] = self.metric_cache.get(k, 0) + logs[k]
+        if self.step % self.display == 0:
+            metrics_log = ""
+            for (k, v) in self.metric_cache.items():
+                val = v / self.display
+                if abs(val) > 1e-3:
+                    metrics_log += " - %s: %.4f" % (k, val)
+                else:
+                    metrics_log += " - %s: %.4e" % (k, val)
+            print("\nstep: {} ... {}".format(self.step, metrics_log))
+            self.metric_cache.clear()

@@ -85,6 +85,7 @@ def plot_performance(out_true, out_pred, save_name=None):
         plt.ylim([0.0,1.0])
         plt.legend()
         plt.plot((0,1),'k--')
+        fig.tight_layout()
         plt.show()
         if save_name: fig.savefig(save_name,bbox_inches='tight')
 

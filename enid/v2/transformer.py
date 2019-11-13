@@ -183,22 +183,51 @@ class LayerNormResidualConnection(tf.keras.layers.Layer):
     That is, the output of each sub-layer is LayerNorm(x+ Sublayer(x)), where Sublayer(x) is the function implemented by the sub-layer itself.
     """
 
-    def __init__(self, layer_index, mode, dropout_prob=0.1, use_residual_conn=True, **kwargs):
+    def __init__(self, layer_index, d_model, mode, dropout_prob=0.1, use_residual_conn=True, **kwargs):
         super(LayerNormResidualConnection, self).__init__(name=f'LayerNormResidualConnection_{mode}_{layer_index}', **kwargs)
 
         self.layer_index = layer_index
         self.dropout_prob = dropout_prob
         self.use_residual_conn = use_residual_conn
-        self.batch_norm_layer = tf.keras.layers.BatchNormalization()
+        self.norm_scale = tf.Variable(
+            tf.ones([d_model]), name="layer_norm_scale",
+        )  # [filter]
+        self.norm_bias = tf.Variable(
+            tf.zeros([d_model]), name="layer_norm_bias",
+        )  # [filter]
+        # self.batch_norm_layer = tf.keras.layers.BatchNormalization()
+
+    def _layer_normalization(self, x):
+        """
+        x should be:[batch_size,sequence_length,d_model]
+        :return:
+        """
+        # 1. normalize input by using  mean and variance according to las
+        # dimension
+        mean = tf.reduce_mean(
+            x, axis=-1, keepdims=True
+        )  # [batch_size,sequence_length,1]
+        variance = tf.reduce_mean(
+            tf.square(x - mean), axis=-1, keepdims=True
+        )  # [batch_size,sequence_length,1]
+        norm_x = (x - mean) * tf.sqrt(
+            variance + 1e-6
+        )  # [batch_size,sequence_length,d_model]
+
+        # 2. re-scale normalized input back
+        output = (
+            norm_x * self.norm_scale + self.norm_bias
+        )  # [batch_size,sequence_length,d_model]
+        return output  # [batch_size,sequence_length,d_model]
 
     # call residual connection and layer normalization
     def call(self, inputs):
         x, y = inputs
         if self.use_residual_conn:
             x_residual = x + tf.nn.dropout(y, self.dropout_prob)
-            x_layer_norm = self.batch_norm_layer(x_residual, training=False)
+            x_layer_norm = self._layer_normalization(x_residual) # self.batch_norm_layer(x_residual, training=False)
         else:
-            x_layer_norm = self.batch_norm_layer(x, training=False)
+            x_layer_norm = self._layer_normalization(x) # self.batch_norm_layer(x, training=False)
         return x_layer_norm
 
 class Encoder(tf.keras.layers.Layer):
@@ -220,9 +249,9 @@ class Encoder(tf.keras.layers.Layer):
         
         self.V_s = [self.add_weight(name=f'V_{layer_index}', shape=[self.batch_size, self.sequence_length, self.d_model], initializer='he_normal') for layer_index in range(self.num_layer)]
         self.encode_stack = [{"MultiHeadAttention": MultiHeadAttention(layer_index, self.d_model, self.sequence_length, self.h, dropout_prob=dropout_prob),
-                              "MHA_Resid": LayerNormResidualConnection(layer_index, "MHA_Resid", dropout_prob=dropout_prob, use_residual_conn=use_residual_conn),
+                              "MHA_Resid": LayerNormResidualConnection(layer_index, self.d_model, "MHA_Resid", dropout_prob=dropout_prob, use_residual_conn=use_residual_conn),
                               "FeedForward": FeedFoward(layer_index, self.d_model, self.d_ff),
-                              "FF_Resid": LayerNormResidualConnection(layer_index, 'FF_Resid', dropout_prob=dropout_prob, use_residual_conn=use_residual_conn)}
+                              "FF_Resid": LayerNormResidualConnection(layer_index, self.d_model, 'FF_Resid', dropout_prob=dropout_prob, use_residual_conn=use_residual_conn)}
                               for layer_index in range(self.num_layer)]
 
     def call(self, inputs):
