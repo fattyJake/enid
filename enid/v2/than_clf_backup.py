@@ -15,7 +15,6 @@ from .transformer import Encoder
 from .attention import Attention
 from .tlstm import TLSTM
 
-
 def build_model(
     num_classes: int,
     max_sequence_length: int,
@@ -32,9 +31,7 @@ def build_model(
 ):
     """
     Build Time-Aware-HAN model for claim classification
-    Uses an embedding layer, followed by a token-level transformer encoding
-    with attention, a sentence-level time-aware-lstm with attention and sofrmax
-    layer
+    Uses an embedding layer, followed by a token-level transformer encoding with attention, a sentence-level time-aware-lstm with attention and sofrmax layer
 
     Parameters
     ----------
@@ -48,8 +45,7 @@ def build_model(
         fixed padding number of tokens each time bucket
 
     batch_size: int, optional (default: 64)
-        size of training batches, this won't affect training speed
-        significantly; smaller batch leads to more regularization
+        size of training batches, this won't affect training speed significantly; smaller batch leads to more regularization
 
     d_model: int, optional (default: 256)
         sizes of transformer Q, K, V vectors
@@ -70,8 +66,7 @@ def build_model(
         percentage of neurons to drop each layer
 
     l2_reg_lambda: float, optional (default: .0)
-        L2 regularization lambda for fully-connected layer to prevent potential
-        overfitting
+        L2 regularization lambda for fully-connected layer to prevent potential overfitting
 
     learning_rate: int, optional (default: 1e-04)
         model learning rate
@@ -136,7 +131,7 @@ def build_model(
     )
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate),
-        loss=tf.keras.losses.CategoricalCrossentropy(reduction='sum'),
+        loss=tf.keras.losses.CategoricalCrossentropy(),
         metrics=[tf.keras.metrics.AUC(num_thresholds=50 * batch_size)],
     )
     return model
@@ -170,19 +165,16 @@ def train_model(
         whole training ground truth
 
     num_epochs: int
-        number of epochs of training, one epoch means finishing training entire
-        training set
+        number of epochs of training, one epoch means finishing training entire training set
 
     model_path: str
         the path to store the model
 
     dev_sample_percentage: float
-        percentage of x_train seperated from training process and used for
-        validation
+        percentage of x_train seperated from training process and used for validation
 
     evaluate_every: int
-        number of steps to perform a evaluation on development (validation) set
-        and print out info
+        number of steps to perform a evaluation on development (validation) set and print out info
 
     Returns
     ----------
@@ -194,10 +186,10 @@ def train_model(
     >>> from enid.than_clf import build_model, train_model
     >>> model = build_model(2, 30, 40)
     >>> model = train_model(model, t_train, x_train, y_train, num_epochs=2)
-    Epoch 1...
-    Step: 100     |  Loss:  0.3245573  |  Development Loss:  0.3502102  |  ...
-    Step: 200     |  Loss:  0.3902801  |  Development Loss:  0.3339590  |  ...
-    ...
+    Epoch 1/2
+    723648/723648 [==============================] - 4336s 6ms/sample - loss: 0.4735 - categorical_crossentropy: 0.4735 - val_loss: 0.4703 - val_categorical_crossentropy: 0.4703
+    Epoch 2/2
+    723648/723648 [==============================] - 4375s 6ms/sample - loss: 0.4566 - categorical_crossentropy: 0.4566 - val_loss: 0.4736 - val_categorical_crossentropy: 0.4736
     """
 
     training_size = int(y_train.shape[0] / model.batch_size) * model.batch_size
@@ -207,6 +199,8 @@ def train_model(
     train_index = np.arange(training_size)
     np.random.shuffle(train_index)
     train_index, dev_index = train_index[:-dev_size], train_index[-dev_size:]
+    train_index -= dev_size
+
     t_train, t_dev = (
         np.take(t_train, train_index, axis=0),
         np.take(t_train, dev_index, axis=0),
@@ -219,82 +213,76 @@ def train_model(
         np.take(y_train, train_index, axis=0),
         np.take(y_train, dev_index, axis=0),
     )
-    training_size -= dev_size
+
+    def batch_generate(numpy_set, size):
+        i = 0
+        while i < size - model.batch_size:
+            yield (
+                [
+                    numpy_set[0][i:i + model.batch_size],
+                    numpy_set[1][i:i + model.batch_size]
+                ],
+                numpy_set[2][i:i + model.batch_size]
+            )
+            i += model.batch_size
+    
+    tf_training_set = tf.data.Dataset.from_generator(
+        generator=batch_generate,
+        output_types=([tf.int32, tf.int32], tf.int8),
+        output_shapes=(
+            [
+                tf.TensorShape([model.batch_size, model.max_sequence_length]),
+                tf.TensorShape(
+                    [
+                        model.batch_size,
+                        model.max_sequence_length,
+                        model.max_sentence_length
+                    ]
+                )
+            ],
+            tf.TensorShape([model.batch_size, model.num_classes])
+        ),
+        args=[(t_train, x_train, y_train), training_size]
+    )
+
+    tf_dev_set = tf.data.Dataset.from_generator(
+        generator=batch_generate,
+        output_types=([tf.int32, tf.int32], tf.int8),
+        output_shapes=(
+            [
+                tf.TensorShape([model.batch_size, model.max_sequence_length]),
+                tf.TensorShape(
+                    [
+                        model.batch_size,
+                        model.max_sequence_length,
+                        model.max_sentence_length
+                    ]
+                )
+            ],
+            tf.TensorShape([model.batch_size, model.num_classes])
+        ),
+        args=[(t_dev, x_dev, y_dev), dev_size]
+    )
 
     try:
-        train_summary_writer = tf.summary.create_file_writer(
-            os.path.join(model_path, 'train')
+        model.fit(
+            tf_training_set,
+            epochs=num_epochs,
+            verbose=1,
+            callbacks=[
+                tf.keras.callbacks.EarlyStopping(
+                    monitor="val_loss", patience=20
+                ),
+                tf.keras.callbacks.TensorBoard(
+                    log_dir=os.path.join(model_path, "logs"),
+                    update_freq="batch",
+                    histogram_freq=1,
+                ),
+            ],
+            validation_data=tf_dev_set,
+            steps_per_epoch=evaluate_every,
+            validation_freq=1
         )
-        val_summary_writer = tf.summary.create_file_writer(
-            os.path.join(model_path, 'validation')
-        )
-        
-        counter = 1
-        metrics = tf.keras.metrics.AUC(num_thresholds=50 * model.batch_size)
-        
-        for epoch in range(1, num_epochs + 1):
-            print("Epoch", epoch, "...")
-        
-            # loop batch training
-            for start, end in zip(
-                range(0, training_size, model.batch_size),
-                range(model.batch_size, training_size, model.batch_size),
-            ):
-                epoch_x = x_train[start:end]
-                epoch_t = t_train[start:end]
-                epoch_y = y_train[start:end]
-                loss = model.train_on_batch(x=[epoch_t, epoch_x], y=epoch_y)
-                loss /= model.num_classes
-
-                with train_summary_writer.as_default():
-                    tf.summary.scalar('loss', loss, step=counter)
-        
-                if counter % evaluate_every == 0:
-                    dev_loss = _validation_step(
-                        model, metrics, t_dev, x_dev, y_dev, dev_size
-                    )
-                    dev_loss = dev_loss.numpy()
-                    dev_loss /= model.num_classes
-
-                    with val_summary_writer.as_default():
-                        tf.summary.scalar(
-                            'loss', dev_loss, step=counter
-                        )
-                        tf.summary.scalar(
-                            'validation_auc', metrics.result(), step=counter
-                        )
-        
-                    print(
-                        f"Step: {counter: <6}  |  Loss: {loss:10.7f}  |  "
-                        + f"Development Loss: {dev_loss:10.7f}  |  Development"
-                        + f" AUROC: {metrics.result().numpy(): 10.7f}"
-                    )
-
-                    metrics.reset_states()
-
-                counter += 1
-        
-            save_model(model, model_path)
-            print("=" * 100)
-
-        # model.fit(
-        #     x=[t_train, x_train],
-        #     y=y_train,
-        #     batch_size=model.batch_size,
-        #     epochs=num_epochs,
-        #     verbose=1,
-        #     callbacks=[
-        #         tf.keras.callbacks.EarlyStopping(
-        #             monitor="val_loss", patience=1
-        #         ),
-        #         tf.keras.callbacks.TensorBoard(
-        #             log_dir=os.path.join(model_path, "logs"),
-        #             update_freq="batch",
-        #             histogram_freq=1,
-        #         ),
-        #     ],
-        #     validation_data=([t_dev, x_dev], y_dev),
-        # )
     except KeyboardInterrupt:
         print("KeyboardInterrupt Error: saving model...")
         save_model(model, model_path)
@@ -478,14 +466,7 @@ class T_HAN(tf.keras.Model):
             output_dim=self.d_model,
         )
 
-        # self.tlstm_layer = tf.keras.layers.RNN(
-        #     TLSTMCell(
-        #         self.hidden_size,
-        #         dropout=self.dropout_prob,
-        #         recurrent_dropout=self.dropout_prob
-        #     ),
-        #     return_sequences=True
-        # )
+        # self.tlstm_layer = tf.keras.layers.RNN(TLSTMCell(self.hidden_size, time_aware=True, dropout=self.dropout_prob), return_sequences=True, dynamic=True)
         self.tlstm_layer = TLSTM(
             self.hidden_size, dropout_prob=self.dropout_prob
         )
@@ -497,46 +478,48 @@ class T_HAN(tf.keras.Model):
 
         self.output_projection_layer = tf.keras.layers.Dense(self.num_classes)
 
-    @tf.function
-    def call(self, inputs):
+    def call(self, inputs, training=False):
 
         input_t, input_x = inputs
 
         # 1. get emebedding of tokens
-        # [batch_size, num_bucket, sentence_length, embedding_size]
-        input_x = self.Embedding(input_x)
-        input_x = tf.reshape(
-            input_x,
+        inputs = self.Embedding(
+            input_x
+        )  # [batch_size, num_bucket, sentence_length, embedding_size]
+        inputs = tf.reshape(
+            inputs,
             shape=[
                 self.batch_size * self.max_sequence_length,
                 self.max_sentence_length,
                 self.emb_size,
             ],
         )
-        input_x = tf.multiply(
-            input_x, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32))
+        inputs = tf.multiply(
+            inputs, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32))
         )
 
         # 2. token level encoder with attention
-        # [batch_size*sequence_length, sentence_length_length, d_model]
-        Q_encoded, _ = self.encoder([input_x, input_x])
-        # [batch_size*sequence_lenth, d_model]
-        sentence_representation = self.token_level_attention(Q_encoded)
-        # [batch_size, sequence_lenth, d_model]
+        Q_encoded, _ = self.encoder(
+            [inputs, inputs]
+        )  # [batch_size*sequence_length, sentence_length_length, d_model]
+        sentence_representation = self.token_level_attention(
+            Q_encoded
+        )  # [batch_size*num_sentences, d_model]
         sentence_representation = tf.reshape(
             sentence_representation,
             shape=[-1, self.max_sequence_length, self.d_model],
-        )
+        )  # shape:[batch_size, sequence_lenth, d_model]
 
         # 3. sentence level tlstm with attention
-        # [batch_size x seq_length x 1]
-        scan_time = tf.expand_dims(input_t, axis=-1)
-        # [batch_size, sequence_lenth, d_model+1]
+        scan_time = tf.expand_dims(
+            input_t, axis=-1
+        )  # [batch_size x seq_length x 1]
         concat_input = tf.concat(
             [tf.cast(scan_time, tf.float32), sentence_representation], 2
-        )
-        # [batch_size, sequence_lenth, hidden_size]
-        hidden_state_sentence = self.tlstm_layer(concat_input)
+        )  # [batch_size, sequence_lenth, d_model+1]
+        hidden_state_sentence = self.tlstm_layer(
+            concat_input
+        )  # [batch_size, sequence_lenth, hidden_size]
         instance_representation = self.sentence_level_attention(
             hidden_state_sentence
         )
@@ -545,44 +528,45 @@ class T_HAN(tf.keras.Model):
         logits = self.output_projection_layer(instance_representation)
         probabilities = tf.nn.softmax(logits)
 
-        return probabilities # [batch_size, self.num_classes].
+        return probabilities  # [batch_size, self.num_classes]. main computation graph is here.
 
-    # def get_config(self):
-    #     return {
-    #         "num_classes": self.num_classes,
-    #         "max_sequence_length": self.max_sequence_length,
-    #         "max_sentence_length": self.max_sentence_length,
-    #         "batch_size": self.batch_size,
-    #         "d_model": self.d_model,
-    #         "d_ff": self.d_ff,
-    #         "h": self.h,
-    #         "encoder_layers": self.encoder_layers,
-    #         "hidden_size": self.hidden_size,
-    #         "dropout_prob": self.dropout_prob,
-    #     }
-
-
-############################  PRIVATE FUNCTIONS  ##############################
+    def get_config(self):
+        return {
+            "num_classes": self.num_classes,
+            "max_sequence_length": self.max_sequence_length,
+            "max_sentence_length": self.max_sentence_length,
+            "batch_size": self.batch_size,
+            "d_model": self.d_model,
+            "d_ff": self.d_ff,
+            "h": self.h,
+            "encoder_layers": self.encoder_layers,
+            "hidden_size": self.hidden_size,
+            "dropout_prob": self.dropout_prob,
+        }
 
 
-def _validation_step(model, metrics, t_dev,  x_dev, y_dev, dev_size):
-    y_dev_pred = tf.concat(
-        [
-            model([t_dev[start:end], x_dev[start:end]])
-            for start, end in zip(
-                range(0, dev_size + 1, model.batch_size),
-                range(
-                    model.batch_size,
-                    dev_size + 1,
-                    model.batch_size,
-                ),
-            )
-        ],
-        axis=0,
-    )
-    dev_loss = tf.keras.losses.categorical_crossentropy(
-        y_true=y_dev, y_pred=y_dev_pred,
-    )
+class NBatchLogger(tf.keras.callbacks.Callback):
+    """
+    A Logger that log average performance per `display` steps.
+    """
 
-    metrics.update_state(y_dev, y_dev_pred)
-    return dev_loss
+    def __init__(self, display):
+        self.step = 0
+        self.display = display
+        self.metric_cache = {}
+
+    def on_batch_end(self, batch, logs={}):
+        self.step += 1
+        for k in self.params["metrics"]:
+            if k in logs:
+                self.metric_cache[k] = self.metric_cache.get(k, 0) + logs[k]
+        if self.step % self.display == 0:
+            metrics_log = ""
+            for (k, v) in self.metric_cache.items():
+                val = v / self.display
+                if abs(val) > 1e-3:
+                    metrics_log += " - %s: %.4f" % (k, val)
+                else:
+                    metrics_log += " - %s: %.4e" % (k, val)
+            print("\nstep: {} ... {}".format(self.step, metrics_log))
+            self.metric_cache.clear()
