@@ -195,8 +195,8 @@ def train_model(
     >>> model = build_model(2, 30, 40)
     >>> model = train_model(model, t_train, x_train, y_train, num_epochs=2)
     Epoch 1...
-    Step: 100     |  Loss:  0.6245573  |  Development Loss:  0.3502102  |  ...
-    Step: 200     |  Loss:  0.6902801  |  Development Loss:  0.3339590  |  ...
+    Step: 100     |  Loss:  0.3245573  |  Development Loss:  0.3502102  |  ...
+    Step: 200     |  Loss:  0.3902801  |  Development Loss:  0.3339590  |  ...
     ...
     """
 
@@ -219,6 +219,7 @@ def train_model(
         np.take(y_train, train_index, axis=0),
         np.take(y_train, dev_index, axis=0),
     )
+    training_size -= dev_size
 
     try:
         train_summary_writer = tf.summary.create_file_writer(
@@ -255,7 +256,7 @@ def train_model(
                     dev_loss = dev_loss.numpy().mean()
                     with val_summary_writer.as_default():
                         tf.summary.scalar(
-                            'validation_loss', dev_loss, step=counter
+                            'loss', dev_loss, step=counter
                         )
                         tf.summary.scalar(
                             'validation_auc', metrics.result(), step=counter
@@ -332,30 +333,28 @@ def deploy_model(model, t_test, x_test):
             5.6348788e-04,
             9.9940193e-01], dtype=float32)
     """
-
+    batch_size = model.signatures['serving_default'].output_shapes['output_1'][
+        0
+    ]
     number_examples = t_test.shape[0]
-    fake_samples = model.batch_size - (number_examples % model.batch_size)
+    fake_samples = batch_size - (number_examples % batch_size)
     if fake_samples > 0 and fake_samples < number_examples:
         t_test = np.concatenate([t_test, t_test[-fake_samples:]], axis=0)
         x_test = np.concatenate([x_test, x_test[-fake_samples:]], axis=0)
     if fake_samples > number_examples:
-        sup_rec = int(model.batch_size / number_examples) + 1
+        sup_rec = int(batch_size / number_examples) + 1
         t_test, x_test = (
             np.concatenate([t_test] * sup_rec, axis=0),
             np.concatenate([x_test] * sup_rec, axis=0),
         )
-        t_test, x_test = t_test[: model.batch_size], x_test[: model.batch_size]
+        t_test, x_test = t_test[: batch_size], x_test[: batch_size]
 
     y_probs = np.empty((0))
     for start, end in zip(
-        range(0, number_examples + fake_samples + 1, model.batch_size),
-        range(
-            model.batch_size,
-            number_examples + fake_samples + 1,
-            model.batch_size,
-        ),
+        range(0, number_examples + fake_samples + 1, batch_size),
+        range(batch_size, number_examples + fake_samples + 1, batch_size),
     ):
-        probs = model.call([t_test[start:end], x_test[start:end]], False)[:, 0]
+        probs = model.call([t_test[start:end], x_test[start:end]])[:, 0]
         y_probs = np.concatenate([y_probs, probs])
     if fake_samples > 0:
         return y_probs[:number_examples]
@@ -477,7 +476,14 @@ class T_HAN(tf.keras.Model):
             output_dim=self.d_model,
         )
 
-        # self.tlstm_layer = tf.keras.layers.RNN(TLSTMCell(self.hidden_size, time_aware=True, dropout=self.dropout_prob), return_sequences=True, dynamic=True)
+        # self.tlstm_layer = tf.keras.layers.RNN(
+        #     TLSTMCell(
+        #         self.hidden_size,
+        #         dropout=self.dropout_prob,
+        #         recurrent_dropout=self.dropout_prob
+        #     ),
+        #     return_sequences=True
+        # )
         self.tlstm_layer = TLSTM(
             self.hidden_size, dropout_prob=self.dropout_prob
         )
@@ -495,43 +501,40 @@ class T_HAN(tf.keras.Model):
         input_t, input_x = inputs
 
         # 1. get emebedding of tokens
-        inputs = self.Embedding(
-            input_x
-        )  # [batch_size, num_bucket, sentence_length, embedding_size]
-        inputs = tf.reshape(
-            inputs,
+        # [batch_size, num_bucket, sentence_length, embedding_size]
+        input_x = self.Embedding(input_x)
+        input_x = tf.reshape(
+            input_x,
             shape=[
                 self.batch_size * self.max_sequence_length,
                 self.max_sentence_length,
                 self.emb_size,
             ],
         )
-        inputs = tf.multiply(
-            inputs, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32))
+        input_x = tf.multiply(
+            input_x, tf.sqrt(tf.cast(self.d_model, dtype=tf.float32))
         )
 
         # 2. token level encoder with attention
-        Q_encoded, _ = self.encoder(
-            [inputs, inputs]
-        )  # [batch_size*sequence_length, sentence_length_length, d_model]
-        sentence_representation = self.token_level_attention(
-            Q_encoded
-        )  # [batch_size*num_sentences, d_model]
+        # [batch_size*sequence_length, sentence_length_length, d_model]
+        Q_encoded, _ = self.encoder([input_x, input_x])
+        # [batch_size*sequence_lenth, d_model]
+        sentence_representation = self.token_level_attention(Q_encoded)
+        # [batch_size, sequence_lenth, d_model]
         sentence_representation = tf.reshape(
             sentence_representation,
             shape=[-1, self.max_sequence_length, self.d_model],
-        )  # shape:[batch_size, sequence_lenth, d_model]
+        )
 
         # 3. sentence level tlstm with attention
-        scan_time = tf.expand_dims(
-            input_t, axis=-1
-        )  # [batch_size x seq_length x 1]
+        # [batch_size x seq_length x 1]
+        scan_time = tf.expand_dims(input_t, axis=-1)
+        # [batch_size, sequence_lenth, d_model+1]
         concat_input = tf.concat(
             [tf.cast(scan_time, tf.float32), sentence_representation], 2
-        )  # [batch_size, sequence_lenth, d_model+1]
-        hidden_state_sentence = self.tlstm_layer(
-            concat_input
-        )  # [batch_size, sequence_lenth, hidden_size]
+        )
+        # [batch_size, sequence_lenth, hidden_size]
+        hidden_state_sentence = self.tlstm_layer(concat_input)
         instance_representation = self.sentence_level_attention(
             hidden_state_sentence
         )
@@ -540,21 +543,24 @@ class T_HAN(tf.keras.Model):
         logits = self.output_projection_layer(instance_representation)
         probabilities = tf.nn.softmax(logits)
 
-        return probabilities  # [batch_size, self.num_classes]. main computation graph is here.
+        return probabilities # [batch_size, self.num_classes].
 
-    def get_config(self):
-        return {
-            "num_classes": self.num_classes,
-            "max_sequence_length": self.max_sequence_length,
-            "max_sentence_length": self.max_sentence_length,
-            "batch_size": self.batch_size,
-            "d_model": self.d_model,
-            "d_ff": self.d_ff,
-            "h": self.h,
-            "encoder_layers": self.encoder_layers,
-            "hidden_size": self.hidden_size,
-            "dropout_prob": self.dropout_prob,
-        }
+    # def get_config(self):
+    #     return {
+    #         "num_classes": self.num_classes,
+    #         "max_sequence_length": self.max_sequence_length,
+    #         "max_sentence_length": self.max_sentence_length,
+    #         "batch_size": self.batch_size,
+    #         "d_model": self.d_model,
+    #         "d_ff": self.d_ff,
+    #         "h": self.h,
+    #         "encoder_layers": self.encoder_layers,
+    #         "hidden_size": self.hidden_size,
+    #         "dropout_prob": self.dropout_prob,
+    #     }
+
+
+############################  PRIVATE FUNCTIONS  ##############################
 
 
 def _validation_step(model, metrics, t_dev,  x_dev, y_dev, dev_size):

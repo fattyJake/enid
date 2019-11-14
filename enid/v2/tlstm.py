@@ -119,13 +119,13 @@ class TLSTM(Layer):
         T = math_ops.matmul(T, Ones)
         return T
 
-    def _step(self, prev_hidden_memory, concat_input):
+    def _step(self, states, inputs):
 
-        prev_hidden_state, prev_cell = array_ops.unstack(prev_hidden_memory)
+        prev_hidden_state, prev_cell = array_ops.unstack(states)
         x = array_ops.slice(
-            concat_input, [0, 1], [self.batch_size, self.input_dim]
+            inputs, [0, 1], [self.batch_size, self.input_dim]
         )
-        t = array_ops.slice(concat_input, [0, 0], [self.batch_size, 1])
+        t = array_ops.slice(inputs, [0, 0], [self.batch_size, 1])
 
         # Dealing with time irregularity
         # Map elapse time in days or months
@@ -194,6 +194,6 @@ class TLSTM(Layer):
         ini_state_cell = array_ops.stack([initial_hidden, initial_hidden])
 
         packed_hidden_states = functional_ops.scan(
-            self._step, scan_input, initializer=ini_state_cell, name="states"
+            self._step, scan_input, initializer=ini_state_cell, name='states'
         )
         return array_ops.transpose(packed_hidden_states[:, 0, :, :], [1, 0, 2])
