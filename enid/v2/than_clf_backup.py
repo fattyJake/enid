@@ -267,7 +267,9 @@ def train_model(
     try:
         model.fit(
             tf_training_set,
-            epochs=num_epochs,
+            epochs=num_epochs * int(
+                training_size / model.batch_size / evaluate_every
+            ),
             verbose=1,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
