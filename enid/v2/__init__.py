@@ -23,5 +23,6 @@ from . import tlstm
 from . import attention
 from . import transformer
 from . import than_clf
+from . import than_clf_backup
 from . import than_clf_func
 from . import visualizations

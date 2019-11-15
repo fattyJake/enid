@@ -219,48 +219,22 @@ def train_model(
         while i < size - model.batch_size:
             yield (
                 [
-                    numpy_set[0][i:i + model.batch_size],
-                    numpy_set[1][i:i + model.batch_size]
+                    np.array(numpy_set[0][i:i + model.batch_size], dtype='int32'),
+                    np.array(numpy_set[1][i:i + model.batch_size], dtype='int32')
                 ],
-                numpy_set[2][i:i + model.batch_size]
+                np.array(numpy_set[2][i:i + model.batch_size], dtype='int32')
             )
             i += model.batch_size
     
     tf_training_set = tf.data.Dataset.from_generator(
         generator=batch_generate,
         output_types=([tf.int32, tf.int32], tf.int8),
-        output_shapes=(
-            [
-                tf.TensorShape([model.batch_size, model.max_sequence_length]),
-                tf.TensorShape(
-                    [
-                        model.batch_size,
-                        model.max_sequence_length,
-                        model.max_sentence_length
-                    ]
-                )
-            ],
-            tf.TensorShape([model.batch_size, model.num_classes])
-        ),
         args=[(t_train, x_train, y_train), training_size]
     )
 
     tf_dev_set = tf.data.Dataset.from_generator(
         generator=batch_generate,
         output_types=([tf.int32, tf.int32], tf.int8),
-        output_shapes=(
-            [
-                tf.TensorShape([model.batch_size, model.max_sequence_length]),
-                tf.TensorShape(
-                    [
-                        model.batch_size,
-                        model.max_sequence_length,
-                        model.max_sentence_length
-                    ]
-                )
-            ],
-            tf.TensorShape([model.batch_size, model.num_classes])
-        ),
         args=[(t_dev, x_dev, y_dev), dev_size]
     )
 
