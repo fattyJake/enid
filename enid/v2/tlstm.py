@@ -19,7 +19,25 @@ from tensorflow.python.ops import gen_math_ops
 
 class TLSTM(Layer):
     """
-    a
+    Time-Aware LSTM with several additional regularization and batch
+    normalization; edit `LSTM` of tensorflow.
+
+    The implementation is based on: http://arxiv.org/abs/1409.2329 and
+    https://www.kdd.org/kdd2017/papers/view/patient-subtyping-via-time-aware-lstm-networks
+
+    Parameters
+    ----------
+    units : int
+        The number of units in the LSTM cell.
+
+    dropout_prob : float, optional
+        probability of varaibles to dropout
+
+    Examples
+    --------
+    >>> from enid.tlstm import TLSTM
+    >>> tlstm_layer = TLSTM(128, 0.2)
+    >>> output, _ = tlstm_layer(input_)
     """
 
     def __init__(self, units, dropout_prob=0.0, **kwargs):
