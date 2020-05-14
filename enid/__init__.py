@@ -20,8 +20,8 @@
 
 from . import data_helper
 from . import tlstm
-from . import claim2vec
+# from . import claim2vec
 from . import than_clf
-from . import than_clf_rnn
+from . import than_clf_lstm
 from . import visualizations
-from . import interpreter
+# from . import interpreter

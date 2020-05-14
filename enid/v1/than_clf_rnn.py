@@ -116,11 +116,10 @@ class T_HAN(object):
 
         """init all hyperparameter here"""
         tf.reset_default_graph()
-        assert mode in [
-            "train",
-            "deploy",
-        ], 'AttributeError: mode only acccept "train" or "deploy", '\
-            f'got {mode} instead.'
+        assert mode in ["train", "deploy",], (
+            'AttributeError: mode only acccept "train" or "deploy", '
+            f"got {mode} instead."
+        )
         self.mode = mode
 
         if self.mode == "train":
@@ -280,14 +279,13 @@ class T_HAN(object):
                         )
                         + self.b_projection
                     )
-                # [batch_size, self.num_classes]. main computation graph is here.
+                    # [batch_size, self.num_classes]. main computation graph is here.
                     self.probs = tf.nn.softmax(self.logits, name="probs")
 
-                assert self.objective in [
-                    "ce",
-                    "auc",
-                ], 'AttributeError: objective only acccept "ce" or "auc", '\
-                    'got {}'.format(str(self.objective))
+                assert self.objective in ["ce", "auc",], (
+                    'AttributeError: objective only acccept "ce" or "auc", '
+                    "got {}".format(str(self.objective))
+                )
                 if self.objective == "ce":
                     self.loss_val = self._loss(self.l2_reg_lambda)
                 if self.objective == "auc":
@@ -354,8 +352,10 @@ class T_HAN(object):
             self.input_x = self.graph.get_tensor_by_name("input_x:0")
             self.input_t = self.graph.get_tensor_by_name("input_t:0")
 
-            self.max_sequence_length, self.max_sentence_length = \
-                self.input_x.get_shape()[1:]
+            (
+                self.max_sequence_length,
+                self.max_sentence_length,
+            ) = self.input_x.get_shape()[1:]
             self.max_sequence_length, self.max_sentence_length = (
                 int(self.max_sequence_length),
                 int(self.max_sentence_length),
@@ -485,9 +485,9 @@ class T_HAN(object):
                         x_dev, t_dev, y_dev, batch_size, writer_val
                     )
                     print(
-                        f"Step: {counter: <6}  |  Loss: {curr_loss:10.7f}  |"\
-                            f"  Development Loss: {dev_loss:10.7f}  |"\
-                                f"  Development AUROC: {dev_accu: 10.7f}"
+                        f"Step: {counter: <6}  |  Loss: {curr_loss:10.7f}  |"
+                        f"  Development Loss: {dev_loss:10.7f}  |"
+                        f"  Development AUROC: {dev_accu: 10.7f}"
                     )
             self.sess.run(self.epoch_increment)
 
@@ -519,8 +519,10 @@ class T_HAN(object):
         y_probs: 1-D numpy array, shape (num_exemplar,)
                 predicted target values based on trained model
         """
-        assert self.mode == "deploy", 'ModeError: deploy module need to '\
+        assert self.mode == "deploy", (
+            "ModeError: deploy module need to "
             'initialize T_HAN.mode as "deploy".'
+        )
         number_examples = t_test.shape[0]
         if number_examples < 128:
             y_probs = self.sess.run(

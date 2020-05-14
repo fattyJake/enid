@@ -202,19 +202,14 @@ def train_model(
         np.take(y_train, dev_index, axis=0),
     )
 
-
     def training_batch_generate():
         i = 0
         while i < training_size - batch_size - 1:
             yield (
-                (
-                    t_train[i:i + batch_size],
-                    x_train[i:i + batch_size]
-                ),
-                y_train[i:i + batch_size]
+                (t_train[i : i + batch_size], x_train[i : i + batch_size]),
+                y_train[i : i + batch_size],
             )
             i += batch_size
-
 
     tf_training_set = tf.data.Dataset.from_generator(
         generator=training_batch_generate,
@@ -226,12 +221,12 @@ def train_model(
                     [
                         batch_size,
                         model.max_sequence_length,
-                        model.max_sentence_length
+                        model.max_sentence_length,
                     ]
-                )
+                ),
             ),
-            tf.TensorShape([batch_size, model.num_classes])
-        )
+            tf.TensorShape([batch_size, model.num_classes]),
+        ),
     ).repeat()
 
     tf_dev_set = tf.data.Dataset.from_tensor_slices(
@@ -241,9 +236,8 @@ def train_model(
     try:
         model.fit(
             tf_training_set,
-            epochs=num_epochs * int(
-                training_size / batch_size / evaluate_every
-            ),
+            epochs=num_epochs
+            * int(training_size / batch_size / evaluate_every),
             verbose=2,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
@@ -257,14 +251,14 @@ def train_model(
             ],
             validation_data=tf_dev_set,
             steps_per_epoch=evaluate_every,
-            validation_freq=1
+            validation_freq=1,
         )
         save_model(model, model_path)
 
     except KeyboardInterrupt:
         print("KeyboardInterrupt Error: saving model...")
         save_model(model, model_path)
-    
+
     return model
 
 
@@ -319,7 +313,7 @@ def deploy_model(model, t_test, x_test, batch_size=64):
             y_probs = np.concatenate([y_probs, probs])
         probs = model.call([t_test[end:], x_test[end:]])[:, 0]
         y_probs = np.concatenate([y_probs, probs])
-    
+
     return y_probs
 
 
@@ -342,7 +336,7 @@ def save_model(model, model_path):
     #         )
     #     ]
     # )
-    tf.keras.models.save_model(model, model_path, save_format='tf')
+    tf.keras.models.save_model(model, model_path, save_format="tf")
 
 
 def load_model(model_path):
@@ -391,22 +385,21 @@ class T_HAN(tf.keras.Model):
 
         self.token_forward_layer = tf.keras.layers.LSTM(
             self.hidden_size,
-            kernel_initializer='he_normal',
+            kernel_initializer="he_normal",
             dropout=self.dropout_prob,
             recurrent_dropout=self.dropout_prob,
             return_sequences=True,
         )
         self.token_backward_layer = tf.keras.layers.LSTM(
             self.hidden_size,
-            kernel_initializer='he_normal',
+            kernel_initializer="he_normal",
             dropout=self.dropout_prob,
             recurrent_dropout=self.dropout_prob,
             return_sequences=True,
-            go_backwards=True
+            go_backwards=True,
         )
         self.token_bilstm = tf.keras.layers.Bidirectional(
-            self.token_forward_layer,
-            backward_layer=self.token_backward_layer
+            self.token_forward_layer, backward_layer=self.token_backward_layer
         )
         self.token_level_attention = Attention(
             level="token",
@@ -434,8 +427,7 @@ class T_HAN(tf.keras.Model):
             input_x
         )  # [batch_size, num_bucket, sentence_length, embedding_size]
         inputs = tf.reshape(
-            inputs,
-            shape=[-1, self.max_sentence_length, self.emb_size],
+            inputs, shape=[-1, self.max_sentence_length, self.emb_size],
         )
 
         # 2. token level encoder with attention

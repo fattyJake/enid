@@ -82,12 +82,12 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
     def __init__(
         self,
         units,
-        activation='tanh',
-        recurrent_activation='hard_sigmoid',
+        activation="tanh",
+        recurrent_activation="hard_sigmoid",
         use_bias=True,
-        kernel_initializer='glorot_uniform',
-        recurrent_initializer='orthogonal',
-        bias_initializer='zeros',
+        kernel_initializer="glorot_uniform",
+        recurrent_initializer="orthogonal",
+        bias_initializer="zeros",
         unit_forget_bias=True,
         kernel_regularizer=None,
         recurrent_regularizer=None,
@@ -95,10 +95,10 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
         kernel_constraint=None,
         recurrent_constraint=None,
         bias_constraint=None,
-        dropout=0.,
-        recurrent_dropout=0.,
+        dropout=0.0,
+        recurrent_dropout=0.0,
         implementation=1,
-        **kwargs
+        **kwargs,
     ):
         super(TLSTMCell, self).__init__(**kwargs)
         self.units = units
@@ -119,8 +119,8 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
         self.recurrent_constraint = constraints.get(recurrent_constraint)
         self.bias_constraint = constraints.get(bias_constraint)
 
-        self.dropout = min(1., max(0., dropout))
-        self.recurrent_dropout = min(1., max(0., recurrent_dropout))
+        self.dropout = min(1.0, max(0.0, dropout))
+        self.recurrent_dropout = min(1.0, max(0.0, recurrent_dropout))
         self.implementation = implementation
         # tuple(_ListWrapper) was silently dropping list content in at least 2.7.10,
         # and fixed after 2.7.16. Converting the state_size to wrapper around
@@ -140,17 +140,17 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
 
         self.kernel = self.add_weight(
             shape=(self.input_dim, self.units * 4),
-            name='kernel',
+            name="kernel",
             initializer=self.kernel_initializer,
             regularizer=self.kernel_regularizer,
-            constraint=self.kernel_constraint
+            constraint=self.kernel_constraint,
         )
         self.recurrent_kernel = self.add_weight(
             shape=(self.units, self.units * 4),
-            name='recurrent_kernel',
+            name="recurrent_kernel",
             initializer=self.recurrent_initializer,
             regularizer=self.recurrent_regularizer,
-            constraint=self.recurrent_constraint
+            constraint=self.recurrent_constraint,
         )
 
         self.W_decomp = self.add_weight(
@@ -181,14 +181,15 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
                             ),
                         ]
                     )
+
             else:
                 bias_initializer = self.bias_initializer
             self.bias = self.add_weight(
                 shape=(self.units * 4,),
-                name='bias',
+                name="bias",
                 initializer=bias_initializer,
                 regularizer=self.bias_regularizer,
-                constraint=self.bias_constraint
+                constraint=self.bias_constraint,
             )
         else:
             self.bias = None
@@ -203,29 +204,29 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
         ones = array_ops.ones([1, self.units], dtype=dtypes.float32)
         T = math_ops.matmul(T, ones)
         return T
-        
+
     def _compute_carry_and_output(self, x, h_tm1, c_tm1):
         """Computes carry and output using split kernels."""
         x_i, x_f, x_c, x_o = x
         h_tm1_i, h_tm1_f, h_tm1_c, h_tm1_o = h_tm1
         i = self.recurrent_activation(
-            x_i + K.dot(h_tm1_i, self.recurrent_kernel[:, :self.units])
+            x_i + K.dot(h_tm1_i, self.recurrent_kernel[:, : self.units])
         )
         f = self.recurrent_activation(
-            x_f + K.dot(
-                h_tm1_f, self.recurrent_kernel[:, self.units:self.units * 2]
+            x_f
+            + K.dot(
+                h_tm1_f, self.recurrent_kernel[:, self.units : self.units * 2]
             )
         )
         c = f * c_tm1 + i * self.activation(
-            x_c + K.dot(
+            x_c
+            + K.dot(
                 h_tm1_c,
-                self.recurrent_kernel[:, self.units * 2:self.units * 3]
+                self.recurrent_kernel[:, self.units * 2 : self.units * 3],
             )
         )
         o = self.recurrent_activation(
-            x_o + K.dot(
-                h_tm1_o, self.recurrent_kernel[:, self.units * 3:]
-            )
+            x_o + K.dot(h_tm1_o, self.recurrent_kernel[:, self.units * 3 :])
         )
         return c, o
 
@@ -264,7 +265,7 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
         )
 
         if self.implementation == 1:
-            if 0 < self.dropout < 1.:
+            if 0 < self.dropout < 1.0:
                 inputs_i = x * dp_mask[0]
                 inputs_f = x * dp_mask[1]
                 inputs_c = x * dp_mask[2]
@@ -290,7 +291,7 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
                 x_c = K.bias_add(x_c, b_c)
                 x_o = K.bias_add(x_o, b_o)
 
-            if 0 < self.recurrent_dropout < 1.:
+            if 0 < self.recurrent_dropout < 1.0:
                 h_tm1_i = h_tm1 * rec_dp_mask[0]
                 h_tm1_f = h_tm1 * rec_dp_mask[1]
                 h_tm1_c = h_tm1 * rec_dp_mask[2]
@@ -304,10 +305,10 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
             h_tm1 = (h_tm1_i, h_tm1_f, h_tm1_c, h_tm1_o)
             c, o = self._compute_carry_and_output(x, h_tm1, c_tm1)
         else:
-            if 0. < self.dropout < 1.:
+            if 0.0 < self.dropout < 1.0:
                 x = x * dp_mask[0]
             z = K.dot(x, self.kernel)
-            if 0. < self.recurrent_dropout < 1.:
+            if 0.0 < self.recurrent_dropout < 1.0:
                 h_tm1 = h_tm1 * rec_dp_mask[0]
             z += K.dot(h_tm1, self.recurrent_kernel)
             if self.use_bias:
@@ -321,40 +322,35 @@ class TLSTMCell(DropoutRNNCellMixin, Layer):
 
     def get_config(self):
         config = {
-            'units':
-                self.units,
-            'activation':
-                activations.serialize(self.activation),
-            'recurrent_activation':
-                activations.serialize(self.recurrent_activation),
-            'use_bias':
-                self.use_bias,
-            'kernel_initializer':
-                initializers.serialize(self.kernel_initializer),
-            'recurrent_initializer':
-                initializers.serialize(self.recurrent_initializer),
-            'bias_initializer':
-                initializers.serialize(self.bias_initializer),
-            'unit_forget_bias':
-                self.unit_forget_bias,
-            'kernel_regularizer':
-                regularizers.serialize(self.kernel_regularizer),
-            'recurrent_regularizer':
-                regularizers.serialize(self.recurrent_regularizer),
-            'bias_regularizer':
-                regularizers.serialize(self.bias_regularizer),
-            'kernel_constraint':
-                constraints.serialize(self.kernel_constraint),
-            'recurrent_constraint':
-                constraints.serialize(self.recurrent_constraint),
-            'bias_constraint':
-                constraints.serialize(self.bias_constraint),
-            'dropout':
-                self.dropout,
-            'recurrent_dropout':
-                self.recurrent_dropout,
-            'implementation':
-                self.implementation
+            "units": self.units,
+            "activation": activations.serialize(self.activation),
+            "recurrent_activation": activations.serialize(
+                self.recurrent_activation
+            ),
+            "use_bias": self.use_bias,
+            "kernel_initializer": initializers.serialize(
+                self.kernel_initializer
+            ),
+            "recurrent_initializer": initializers.serialize(
+                self.recurrent_initializer
+            ),
+            "bias_initializer": initializers.serialize(self.bias_initializer),
+            "unit_forget_bias": self.unit_forget_bias,
+            "kernel_regularizer": regularizers.serialize(
+                self.kernel_regularizer
+            ),
+            "recurrent_regularizer": regularizers.serialize(
+                self.recurrent_regularizer
+            ),
+            "bias_regularizer": regularizers.serialize(self.bias_regularizer),
+            "kernel_constraint": constraints.serialize(self.kernel_constraint),
+            "recurrent_constraint": constraints.serialize(
+                self.recurrent_constraint
+            ),
+            "bias_constraint": constraints.serialize(self.bias_constraint),
+            "dropout": self.dropout,
+            "recurrent_dropout": self.recurrent_dropout,
+            "implementation": self.implementation,
         }
         base_config = super(TLSTMCell, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -378,8 +374,8 @@ def _generate_zero_filled_state(batch_size_tensor, state_size, dtype):
     """Generate a zero filled tensor with shape [batch_size, state_size]."""
     if batch_size_tensor is None or dtype is None:
         raise ValueError(
-            'batch_size and dtype cannot be None while constructing initial '
-            + f'state: batch_size={batch_size_tensor}, dtype={dtype}'
+            "batch_size and dtype cannot be None while constructing initial "
+            + f"state: batch_size={batch_size_tensor}, dtype={dtype}"
         )
 
     def create_zeros(unnested_state_size):
