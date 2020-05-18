@@ -25,6 +25,7 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         sequence_length,
         h,
         dropout_prob=0.0,
+        l2_reg_lambda=0.0,
         **kwargs,
     ):
         super(MultiHeadAttention, self).__init__(
@@ -40,24 +41,28 @@ class MultiHeadAttention(tf.keras.layers.Layer):
             self.d_model,
             activation="relu",
             kernel_initializer="he_normal",
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda),
             name="Q",
         )
         self.K_proj_layer = tf.keras.layers.Dense(
             self.d_model,
             activation="relu",
             kernel_initializer="he_normal",
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda),
             name="K",
         )
         self.V_proj_layer = tf.keras.layers.Dense(
             self.d_model,
             activation="relu",
             kernel_initializer="he_normal",
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda),
             name="V",
         )
         self.output_layer = tf.keras.layers.Dense(
             self.d_model,
             activation="relu",
             kernel_initializer="he_normal",
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda),
             name="output",
         )
 
@@ -216,7 +221,7 @@ class FeedFoward(tf.keras.layers.Layer):
     The dimensionality of input and output is d_model= 512, and the inner-layer has dimensionality d_ff= 2048.
     """
 
-    def __init__(self, layer_index, d_model, d_ff, **kwargs):
+    def __init__(self, layer_index, d_model, d_ff, l2_reg_lambda, **kwargs):
         """
         :param x: shape should be:[batch,sequence_length,d_model]
         :param layer_index:  index of layer
@@ -230,6 +235,7 @@ class FeedFoward(tf.keras.layers.Layer):
             d_ff,
             activation="relu",
             kernel_initializer="he_normal",
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda),
             name="inner_layer",
         )
         self.outer_layer = tf.keras.layers.Dense(
@@ -332,6 +338,7 @@ class Encoder(tf.keras.layers.Layer):
         batch_size,
         num_layer=6,
         dropout_prob=None,
+        l2_reg_lambda=0.0,
         use_residual_conn=True,
         **kwargs,
     ):
@@ -344,6 +351,7 @@ class Encoder(tf.keras.layers.Layer):
         self.num_layer = num_layer
         self.batch_size = batch_size
         self.dropout_prob = dropout_prob
+        self.l2_reg_lambda = l2_reg_lambda
         self.use_residual_conn = use_residual_conn
 
         self.V_s = [
@@ -362,6 +370,7 @@ class Encoder(tf.keras.layers.Layer):
                     self.sequence_length,
                     self.h,
                     dropout_prob=dropout_prob,
+                    l2_reg_lambda=l2_reg_lambda
                 ),
                 "MHA_Resid": LayerNormResidualConnection(
                     layer_index,
@@ -371,7 +380,7 @@ class Encoder(tf.keras.layers.Layer):
                     use_residual_conn=use_residual_conn,
                 ),
                 "FeedForward": FeedFoward(
-                    layer_index, self.d_model, self.d_ff
+                    layer_index, self.d_model, self.d_ff, l2_reg_lambda
                 ),
                 "FF_Resid": LayerNormResidualConnection(
                     layer_index,

@@ -4,10 +4,7 @@
     "max_sentence_length": 30,
     "batch_size": 64,
     "hidden_size": 128,
-    "dropout_keep_prob": 0.8,
+    "dropout_prob": 0.2,
     "l2_reg_lambda": 1e-06,
-    "learning_rate": 0.0001,
-    "grad_clip_thres": null,
-    "decay_steps": 50000,
-    "decay_rate": 1.0
+    "learning_rate": 0.0001
 }

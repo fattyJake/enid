@@ -132,11 +132,12 @@ def build_model(
         encoder_layers,
         hidden_size,
         dropout_prob,
+        l2_reg_lambda,
     )
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate),
         loss=tf.keras.losses.CategoricalCrossentropy(),
-        metrics=[tf.keras.metrics.AUC(num_thresholds=50 * batch_size)],
+        metrics=[tf.keras.metrics.AUC(num_thresholds=1000 * batch_size)],
     )
     return model
 
@@ -267,9 +268,9 @@ def train_model(
             * int(training_size / model.batch_size / evaluate_every),
             verbose=2,
             callbacks=[
-                # tf.keras.callbacks.EarlyStopping(
-                #     monitor="val_loss", patience=patience
-                # ),
+                tf.keras.callbacks.EarlyStopping(
+                    monitor="val_loss", patience=patience
+                ),
                 tf.keras.callbacks.TensorBoard(
                     log_dir=os.path.join(model_path, "logs"),
                     update_freq="batch",
@@ -389,7 +390,7 @@ class T_HAN(tf.keras.Model):
     def __init__(
         self,
         num_classes: int,
-        pretrain_embedding,
+        pretrain_embedding: np.ndarray,
         max_sequence_length: int,
         max_sentence_length: int,
         batch_size: int = 64,
@@ -399,6 +400,7 @@ class T_HAN(tf.keras.Model):
         encoder_layers: int = 6,
         hidden_size: int = 128,
         dropout_prob: float = 0.2,
+        l2_reg_lambda: float = 0.0,
     ):
         """
         A Time-Aware-HAN Keras Subclassed model for claim classification
@@ -415,6 +417,7 @@ class T_HAN(tf.keras.Model):
         self.encoder_layers = encoder_layers
         self.hidden_size = hidden_size
         self.dropout_prob = dropout_prob
+        self.l2_reg_lambda = l2_reg_lambda
 
         self.vocab_size, self.emb_size = pretrain_embedding.shape
         pretrain_embedding = np.concatenate(
@@ -442,21 +445,24 @@ class T_HAN(tf.keras.Model):
             self.batch_size * self.max_sequence_length,
             self.encoder_layers,
             dropout_prob=self.dropout_prob,
+            l2_reg_lambda=self.l2_reg_lambda,
             use_residual_conn=True,
         )
         self.token_level_attention = Attention(
             level="token",
             sequence_length=self.max_sentence_length,
             output_dim=self.d_model,
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda)
         )
 
         self.tlstm_layer = TLSTM(
-            self.hidden_size, dropout_prob=self.dropout_prob
+            self.hidden_size, dropout_prob=self.dropout_prob, kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda)
         )
         self.sentence_level_attention = Attention(
             level="sentence",
             sequence_length=self.max_sequence_length,
             output_dim=self.hidden_size,
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda)
         )
 
         self.output_projection_layer = tf.keras.layers.Dense(self.num_classes)

@@ -15,7 +15,7 @@ class Attention(tf.keras.layers.Layer):
     There are three sets of weights introduced W_a, U_a, and V_a
      """
 
-    def __init__(self, level, sequence_length, output_dim, **kwargs):
+    def __init__(self, level, sequence_length, output_dim, kernel_regularizer=None, **kwargs):
         super(Attention, self).__init__(name=f"Attention_{level}", **kwargs)
 
         # Create a trainable weight variable for this layer.
@@ -26,6 +26,7 @@ class Attention(tf.keras.layers.Layer):
             name=f"W_{level}",
             shape=[output_dim, output_dim],
             initializer="uniform",
+            regularizer=kernel_regularizer
         )
         self.b_a = self.add_weight(
             name=f"b_{level}", shape=[output_dim], initializer="uniform"
@@ -34,6 +35,7 @@ class Attention(tf.keras.layers.Layer):
             name=f"context_vecotor_{level}",
             shape=[output_dim],
             initializer="uniform",
+            regularizer=kernel_regularizer
         )
 
     def call(self, hidden_state):

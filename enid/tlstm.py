@@ -40,10 +40,11 @@ class TLSTM(Layer):
     >>> output, _ = tlstm_layer(input_)
     """
 
-    def __init__(self, units, dropout_prob=0.0, **kwargs):
+    def __init__(self, units, dropout_prob=0.0, kernel_regularizer=None, **kwargs):
         super(TLSTM, self).__init__(**kwargs)
         self.units = units
         self.dropout_prob = dropout_prob
+        self.kernel_regularizer = kernel_regularizer
 
     @tf_utils.shape_type_conversion
     def build(self, input_shape):
@@ -54,75 +55,89 @@ class TLSTM(Layer):
             name="Input_Hidden_weight",
             shape=[self.input_dim, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.Ui = self.add_weight(
             name="Input_State_weight",
             shape=[self.units, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.bi = self.add_weight(
             name="Input_Hidden_bias",
             shape=[self.units,],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
 
         self.Wf = self.add_weight(
             name="Forget_Hidden_weight",
             shape=[self.input_dim, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.Uf = self.add_weight(
             name="Forget_State_weight",
             shape=[self.units, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.bf = self.add_weight(
             name="Forget_Hidden_bias",
             shape=[self.units,],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
 
         self.Wo = self.add_weight(
             name="Output_Hidden_weight",
             shape=[self.input_dim, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.Uo = self.add_weight(
             name="Output_State_weight",
             shape=[self.units, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.bo = self.add_weight(
             name="Output_Hidden_bias",
             shape=[self.units,],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
 
         self.Wc = self.add_weight(
             name="Cell_Hidden_weight",
             shape=[self.input_dim, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.Uc = self.add_weight(
             name="Cell_State_weight",
             shape=[self.units, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.bc = self.add_weight(
             name="Cell_Hidden_bias",
             shape=[self.units,],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
 
         self.W_decomp = self.add_weight(
             name="Decomposition_Hidden_weight",
             shape=[self.units, self.units],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
         self.b_decomp = self.add_weight(
             name="Decomposition_Hidden_bias_enc",
             shape=[self.units,],
             initializer="he_normal",
+            regularizer=self.kernel_regularizer
         )
 
         self.built = True

@@ -9,9 +9,8 @@
 import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_curve, roc_auc_score, brier_score_loss
+from sklearn.metrics import roc_curve, roc_auc_score, precision_recall_curve, brier_score_loss
 from sklearn.calibration import calibration_curve
-from sklearn.metrics import precision_recall_curve
 
 
 def plot_performance(out_true, out_pred, save_name=None):

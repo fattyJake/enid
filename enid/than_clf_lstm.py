@@ -240,9 +240,9 @@ def train_model(
             * int(training_size / batch_size / evaluate_every),
             verbose=2,
             callbacks=[
-                tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=patience
-                ),
+                # tf.keras.callbacks.EarlyStopping(
+                #     monitor="val_loss", patience=patience
+                # ),
                 tf.keras.callbacks.TensorBoard(
                     log_dir=os.path.join(model_path, "logs"),
                     update_freq="batch",
