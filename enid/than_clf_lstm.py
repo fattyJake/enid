@@ -10,7 +10,6 @@ import os
 import pickle
 import tensorflow as tf
 import numpy as np
-from .transformer import Encoder
 from .attention import Attention
 from .tlstm import TLSTM
 
@@ -105,6 +104,7 @@ def build_model(
         max_sentence_length,
         hidden_size,
         dropout_prob,
+        l2_reg_lambda
     )
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate),
@@ -336,7 +336,7 @@ def save_model(model, model_path):
     #         )
     #     ]
     # )
-    tf.keras.models.save_model(model, model_path, save_format="tf")
+    model.save(model_path, save_format='tf')
 
 
 def load_model(model_path):
@@ -353,6 +353,7 @@ class T_HAN(tf.keras.Model):
         max_sentence_length: int,
         hidden_size: int = 128,
         dropout_prob: float = 0.2,
+        l2_reg_lambda: float = 0.0
     ):
         """
         A Time-Aware-HAN Keras Subclassed model for claim classification
@@ -388,15 +389,19 @@ class T_HAN(tf.keras.Model):
             kernel_initializer="he_normal",
             dropout=self.dropout_prob,
             recurrent_dropout=self.dropout_prob,
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda),
             return_sequences=True,
+            name='forward'
         )
         self.token_backward_layer = tf.keras.layers.LSTM(
             self.hidden_size,
             kernel_initializer="he_normal",
             dropout=self.dropout_prob,
             recurrent_dropout=self.dropout_prob,
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda),
             return_sequences=True,
             go_backwards=True,
+            name='backward'
         )
         self.token_bilstm = tf.keras.layers.Bidirectional(
             self.token_forward_layer, backward_layer=self.token_backward_layer
@@ -405,15 +410,17 @@ class T_HAN(tf.keras.Model):
             level="token",
             sequence_length=self.max_sentence_length,
             output_dim=self.hidden_size * 2,
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda)
         )
 
         self.tlstm_layer = TLSTM(
-            self.hidden_size, dropout_prob=self.dropout_prob
+            self.hidden_size, dropout_prob=self.dropout_prob, kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda)
         )
         self.sentence_level_attention = Attention(
             level="sentence",
             sequence_length=self.max_sequence_length,
             output_dim=self.hidden_size,
+            kernel_regularizer=tf.keras.regularizers.l2(l2_reg_lambda)
         )
 
         self.output_projection_layer = tf.keras.layers.Dense(self.num_classes)
@@ -461,15 +468,15 @@ class T_HAN(tf.keras.Model):
 
         return probabilities  # [batch_size, self.num_classes].
 
-    def get_config(self):
-        return {
-            "num_classes": self.num_classes,
-            "max_sequence_length": self.max_sequence_length,
-            "max_sentence_length": self.max_sentence_length,
-            "batch_size": self.batch_size,
-            "d_ff": self.d_ff,
-            "h": self.h,
-            "encoder_layers": self.encoder_layers,
-            "hidden_size": self.hidden_size,
-            "dropout_prob": self.dropout_prob,
-        }
+    # def get_config(self):
+    #     return {
+    #         "num_classes": self.num_classes,
+    #         "max_sequence_length": self.max_sequence_length,
+    #         "max_sentence_length": self.max_sentence_length,
+    #         "batch_size": self.batch_size,
+    #         "d_ff": self.d_ff,
+    #         "h": self.h,
+    #         "encoder_layers": self.encoder_layers,
+    #         "hidden_size": self.hidden_size,
+    #         "dropout_prob": self.dropout_prob,
+    #     }

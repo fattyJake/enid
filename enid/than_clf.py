@@ -268,9 +268,9 @@ def train_model(
             * int(training_size / model.batch_size / evaluate_every),
             verbose=2,
             callbacks=[
-                tf.keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=patience
-                ),
+                # tf.keras.callbacks.EarlyStopping(
+                #     monitor="val_loss", patience=patience
+                # ),
                 tf.keras.callbacks.TensorBoard(
                     log_dir=os.path.join(model_path, "logs"),
                     update_freq="batch",
@@ -350,7 +350,7 @@ def deploy_model(model, t_test, x_test):
         range(0, number_examples + fake_samples + 1, batch_size),
         range(batch_size, number_examples + fake_samples + 1, batch_size),
     ):
-        probs = model.call([t_test[start:end], x_test[start:end]])[:, 0]
+        probs = model.call((t_test[start:end], x_test[start:end]))[:, 0]
         y_probs = np.concatenate([y_probs, probs])
     if fake_samples > 0:
         return y_probs[:number_examples]
@@ -467,6 +467,7 @@ class T_HAN(tf.keras.Model):
 
         self.output_projection_layer = tf.keras.layers.Dense(self.num_classes)
         self.temp = tf.Variable(initial_value=1., name="temp") # T temperature parameter
+
 
     def call(self, inputs, training=False):
 
